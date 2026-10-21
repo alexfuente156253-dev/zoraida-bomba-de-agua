@@ -253,7 +253,7 @@ void iniciarSondeoCalle(unsigned long ahora, float presionActual) {
 // Preparación: tanque a ~3 dedos del fondo, grifo abierto ~15 s y cerrado, B1 apagada.
 void calibrarEstatica() {
   if (estado != REPOSO_PRESURIZADO || bombaEncendida) {
-    Serial.println(F("E: requiere REPOSO_PRESURIZADO con bomba apagada"));
+    Serial.println(F("RECHAZADO: requiere REPOSO_PRESURIZADO con bomba apagada"));
     return;
   }
   float suma = 0.0, pMin = 1000.0, pMax = 0.0;
@@ -263,7 +263,7 @@ void calibrarEstatica() {
     wdt_reset();
     float p = actualizarLecturaSensor();
     if (!sensorValido) {
-      Serial.println(F("E: sensor invalido, medicion cancelada"));
+      Serial.println(F("ABORTADO: sensor invalido"));
       return;
     }
     suma += p;
@@ -281,6 +281,243 @@ void calibrarEstatica() {
   if (prom < 3.0) Serial.println(F("AVISO: estatica < 3 PSI, nivel demasiado bajo o sensor/altura incorrectos"));
   Serial.print(F("Sugerido P_CAIDA_SECO = ")); Serial.println(prom - 1.2, 2);
   Serial.print(F("Sugerida precarga pulmon = ")); Serial.println(prom + 0.4, 2);
+  Serial.print(F("RES,E,prom=")); Serial.print(prom, 2);
+  Serial.print(F(",min=")); Serial.print(pMin, 2);
+  Serial.print(F(",max=")); Serial.print(pMax, 2);
+  Serial.print(F(",caida_seco=")); Serial.print(prom - 1.2, 2);
+  Serial.print(F(",precarga=")); Serial.println(prom + 0.4, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Comandos de calibración con bomba (L, F, S, C). Solo con MODO_CALIBRACION.
+// Seguridad: exigen REPOSO_PRESURIZADO, sensor válido, presupuesto horario y
+// T_MIN_ENTRE_ARRANQUES; cuentan como arranques; abortan por sensor inválido,
+// límite de presión, comando 'X' o tope de tiempo; mantienen el watchdog activo.
+// Las líneas "RES,<cmd>,k=v,..." son para el script tools/calibrar.py.
+// ---------------------------------------------------------------------------
+const float CAL_P_ABORT                = 22.0;     // Límite absoluto de presión en pruebas
+const float CAL_P_CARGA_INI            = 11.0;     // Inicio del cronómetro de T_CARGA_PULMON
+const unsigned long CAL_T_AJUSTE       = 15000UL;  // Tiempo de estabilización con B1 encendida
+const unsigned long CAL_T_MEDICION     = 10000UL;  // Ventana de promedio
+const unsigned long CAL_T_MAX_BOMBA    = 120000UL; // Tope de marcha en C
+const unsigned long CAL_T_MAX_SHUTOFF  = 60000UL;  // Tope de marcha en S
+
+float calPLimite = CAL_P_ABORT;
+const __FlashStringHelper* calMotivo = nullptr;
+
+bool calLeer(float &p) {
+  static unsigned long tImp = 0;
+  wdt_reset();
+  p = actualizarLecturaSensor();
+  if (!sensorValido) { calMotivo = F("sensor invalido"); return false; }
+  if (p >= calPLimite) { calMotivo = F("limite de presion alcanzado"); return false; }
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == 'X' || c == 'x') { calMotivo = F("abortado por X"); return false; }
+  }
+  unsigned long ahora = millis();
+  if (ahora - tImp >= 1000UL) {
+    tImp = ahora;
+    Serial.print(F("P2=")); Serial.println(p, 2);
+  }
+  return true;
+}
+
+void calFin() {
+  apagarBomba();
+  calPLimite  = CAL_P_ABORT;
+  t_condicion = millis();
+  estado      = REPOSO_PRESURIZADO;
+}
+
+void calAbortar() {
+  Serial.print(F("ABORTADO: "));
+  Serial.println(calMotivo);
+  calFin();
+}
+
+bool calPrecondiciones() {
+  unsigned long ahora = millis();
+  if (estado != REPOSO_PRESURIZADO || bombaEncendida) {
+    Serial.println(F("RECHAZADO: requiere REPOSO_PRESURIZADO con bomba apagada"));
+    return false;
+  }
+  if (!sensorValido) {
+    Serial.println(F("RECHAZADO: sensor invalido"));
+    return false;
+  }
+  if (arranquesEnLaHora >= MAX_ARRANQUES_POR_HORA) {
+    Serial.println(F("RECHAZADO: presupuesto de arranques por hora agotado"));
+    return false;
+  }
+  if (ahora - t_ultimoArranque < T_MIN_ENTRE_ARRANQUES) {
+    Serial.print(F("RECHAZADO: esperar "));
+    Serial.print((T_MIN_ENTRE_ARRANQUES - (ahora - t_ultimoArranque)) / 1000UL);
+    Serial.println(F(" s desde el ultimo arranque"));
+    return false;
+  }
+  return true;
+}
+
+bool calEsperar(unsigned long dur) {
+  unsigned long t0 = millis();
+  float p;
+  while (millis() - t0 < dur) {
+    if (!calLeer(p)) return false;
+    delay(50);
+  }
+  return true;
+}
+
+bool calPromedio(unsigned long dur, float &prom, float &pMin, float &pMax) {
+  float suma = 0.0, p;
+  uint16_t n = 0;
+  pMin = 1000.0;
+  pMax = 0.0;
+  unsigned long t0 = millis();
+  while (millis() - t0 < dur) {
+    if (!calLeer(p)) return false;
+    suma += p;
+    n++;
+    if (p < pMin) pMin = p;
+    if (p > pMax) pMax = p;
+    delay(50);
+  }
+  prom = suma / n;
+  return true;
+}
+
+// 'L': P_LLENADO_REAL. Flotador abierto, grifos cerrados. Sugiere P_ARRANQUE y P_TECHO_CEBADO_DINAMICO.
+void calLlenado() {
+  if (!calPrecondiciones()) return;
+  Serial.println(F("L: B1 ON (flotador abierto, grifos cerrados)"));
+  calPLimite = 19.5;
+  float prom, pMin, pMax;
+  encenderBomba(millis());
+  if (!calEsperar(CAL_T_AJUSTE) || !calPromedio(CAL_T_MEDICION, prom, pMin, pMax)) {
+    calAbortar();
+    return;
+  }
+  calFin();
+  Serial.print(F("P_LLENADO_REAL(prom):")); Serial.println(prom, 2);
+  if (pMax - pMin > 0.5) Serial.println(F("AVISO: lectura inestable"));
+  Serial.print(F("Sugerido P_ARRANQUE <= ")); Serial.println(prom - 1.0, 2);
+  Serial.print(F("Sugerido P_TECHO_CEBADO_DINAMICO = ")); Serial.println(prom - 0.3, 2);
+  Serial.print(F("RES,L,prom=")); Serial.print(prom, 2);
+  Serial.print(F(",min=")); Serial.print(pMin, 2);
+  Serial.print(F(",max=")); Serial.print(pMax, 2);
+  Serial.print(F(",p_arranque=")); Serial.print(prom - 1.0, 2);
+  Serial.print(F(",p_techo=")); Serial.println(prom - 0.3, 2);
+}
+
+// 'F': CAIDA_MIN_FLUJO_ACTIVO. Con B1 estable y flotador abierto, apaga y registra la caída en 3 s.
+void calCaidaFlujo() {
+  if (!calPrecondiciones()) return;
+  Serial.println(F("F: B1 ON, luego micro-pausa de 3 s (flotador abierto)"));
+  calPLimite = 19.5;
+  float base, pMin, pMax, p = 0.0;
+  encenderBomba(millis());
+  if (!calEsperar(CAL_T_AJUSTE) || !calPromedio(5000UL, base, pMin, pMax)) {
+    calAbortar();
+    return;
+  }
+  apagarBomba();
+  float pico = base, p15 = base;
+  bool tomado15 = false, cruzo = false;
+  unsigned long t0 = millis();
+  while (millis() - t0 < T_PAUSA_VERIFICACION) {
+    if (!calLeer(p)) { calAbortar(); return; }
+    unsigned long dt = millis() - t0;
+    if (p > pico) pico = p;
+    if (!tomado15 && dt >= T_MIN_PAUSA_EFECTIVA) { p15 = p; tomado15 = true; }
+    if (p <= P_ARRANQUE) cruzo = true;
+    delay(20);
+  }
+  calFin();
+  float caida15 = pico - p15;
+  float caida30 = pico - p;
+  bool confirma = (caida15 >= CAIDA_MIN_FLUJO_ACTIVO) || (p15 <= P_ARRANQUE);
+  Serial.print(F("base=")); Serial.print(base, 2);
+  Serial.print(F(" pico=")); Serial.print(pico, 2);
+  Serial.print(F(" caida a 1.5s=")); Serial.print(caida15, 2);
+  Serial.print(F(" caida a 3.0s=")); Serial.println(caida30, 2);
+  Serial.println(confirma ? F("Flujo CONFIRMADO a 1.5 s") : F("Flujo NO confirmado a 1.5 s: revisar CAIDA_MIN_FLUJO_ACTIVO"));
+  Serial.print(F("RES,F,base=")); Serial.print(base, 2);
+  Serial.print(F(",pico=")); Serial.print(pico, 2);
+  Serial.print(F(",caida_1_5=")); Serial.print(caida15, 2);
+  Serial.print(F(",caida_3_0=")); Serial.print(caida30, 2);
+  Serial.print(F(",cruzo_p_arranque=")); Serial.print(cruzo ? 1 : 0);
+  Serial.print(F(",confirma=")); Serial.println(confirma ? 1 : 0);
+}
+
+// 'S': P_SHUTOFF_REAL. Flotador cerrado y casa sin consumo: sube hasta superar P_MAX_OFF o estancarse.
+void calShutoff() {
+  if (!calPrecondiciones()) return;
+  Serial.println(F("S: B1 ON (flotador cerrado, sin consumo)"));
+  float p = 0.0, pMax = 0.0, pRef = 0.0;
+  bool estanco = false;
+  unsigned long t0 = millis(), tRef = t0;
+  encenderBomba(t0);
+  while (millis() - t0 < CAL_T_MAX_SHUTOFF) {
+    if (!calLeer(p)) { calAbortar(); return; }
+    if (p > pMax) pMax = p;
+    if (p >= P_MAX_OFF + 1.0) break;
+    if (p > pRef + 0.2) { pRef = p; tRef = millis(); }
+    else if (millis() - tRef >= 8000UL) { estanco = true; break; }
+    delay(50);
+  }
+  calFin();
+  bool supera = (pMax >= P_MAX_OFF);
+  Serial.print(F("P_SHUTOFF max=")); Serial.println(pMax, 2);
+  Serial.println(supera ? F("B1 SUPERA P_MAX_OFF") : F("B1 NO alcanza P_MAX_OFF: revisar bomba/pulmon/entrada"));
+  Serial.print(F("RES,S,max=")); Serial.print(pMax, 2);
+  Serial.print(F(",estanco=")); Serial.print(estanco ? 1 : 0);
+  Serial.print(F(",supera_p_max_off=")); Serial.println(supera ? 1 : 0);
+}
+
+// 'C': T_CARGA_PULMON. Cronometra de 11.0 a 20.0 PSI con flotador cerrado y sin consumo.
+void calCargaPulmon() {
+  if (!calPrecondiciones()) return;
+  float p;
+  if (!calLeer(p)) { calAbortar(); return; }
+  if (p > CAL_P_CARGA_INI) {
+    Serial.println(F("RECHAZADO: P2 > 11 PSI; baja la presion abriendo un grifo"));
+    return;
+  }
+  Serial.println(F("C: B1 ON (flotador cerrado, sin consumo)"));
+  bool paso11 = false, completo = false;
+  unsigned long t0 = millis(), t11 = 0, tFin = 0;
+  encenderBomba(t0);
+  while (millis() - t0 < CAL_T_MAX_BOMBA) {
+    if (!calLeer(p)) { calAbortar(); return; }
+    if (!paso11 && p >= CAL_P_CARGA_INI) { paso11 = true; t11 = millis(); }
+    if (paso11 && p >= P_MAX_OFF) { completo = true; tFin = millis(); break; }
+    delay(20);
+  }
+  calFin();
+  if (!completo) {
+    Serial.println(F("INCOMPLETO: no se llego de 11 a 20 PSI en 120 s"));
+    Serial.println(F("RES,C,completo=0"));
+    return;
+  }
+  float t = (tFin - t11) / 1000.0;
+  Serial.print(F("T_CARGA_PULMON(s):")); Serial.println(t, 1);
+  Serial.print(F("Sugerido T_VERIF_INICIAL >= ")); Serial.print(t * 3.0, 0); Serial.println(F(" s"));
+  Serial.print(F("RES,C,completo=1,t_carga_s=")); Serial.print(t, 1);
+  Serial.print(F(",t_verif_inicial_s=")); Serial.println(t * 3.0, 0);
+}
+
+void procesarComandoCal(char c) {
+  switch (c) {
+    case 'E': case 'e': calibrarEstatica(); break;
+    case 'L': case 'l': calLlenado();       break;
+    case 'F': case 'f': calCaidaFlujo();    break;
+    case 'S': case 's': calShutoff();       break;
+    case 'C': case 'c': calCargaPulmon();   break;
+    case 'X': case 'x': calFin(); Serial.println(F("X: bomba apagada")); break;
+    case '?': Serial.println(F("Comandos: E L F S C X ?")); break;
+    default: break;
+  }
 }
 #endif
 
@@ -343,7 +580,7 @@ void loop() {
   }
   if (Serial.available()) {
     char c = Serial.read();
-    if (c == 'E' || c == 'e') calibrarEstatica();
+    procesarComandoCal(c);
   }
 #endif
 
