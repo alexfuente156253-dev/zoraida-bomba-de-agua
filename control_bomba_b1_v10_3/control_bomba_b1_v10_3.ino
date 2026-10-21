@@ -85,6 +85,10 @@ const float ADC_MIN_SENSOR_VALIDO = 45.0;  // < 4.4% de AVCC indica cable cortad
 const float ADC_MAX_SENSOR_VALIDO = 982.0; // > 96.0% de AVCC indica cortocircuito a +AVCC
 
 // ================= UMBRALES DE PRESIÓN CON SEPARACIÓN >= 1.5 PSI =================
+// NOTA DE CALIBRACIÓN (tanque cilíndrico de ~1.5 m): la estática varía ~2.1 PSI entre lleno (~7.1) y
+// casi vacío a ~3 dedos del fondo (~5.0 PSI estimado). P_CAIDA_SECO y la precarga del pulmón se calculan
+// con la estática MÍNIMA medida (P_ESTATICA_REAL = tanque casi vacío): P_CAIDA_SECO = mín - 1.2 (~3.8 PSI
+// estimado; 6.0 es el valor inicial sin calibrar). Ver docs/CALIBRACION.md.
 const float P_CAIDA_SECO            = 6.0;  // Descebado con tanque vacío / pérdida total (< estática)
 const float P_ARRANQUE              = 9.5;  // Cut-in: arranca cuando el pulmón baja a <= 9.5 PSI (+3.5 PSI)
 const float P_TECHO_CEBADO_DINAMICO = 11.0; // Máximo exigible en SONDEO_CALLE (+1.5 PSI sobre P_ARRANQUE)
@@ -244,6 +248,42 @@ void iniciarSondeoCalle(unsigned long ahora, float presionActual) {
   estado              = SONDEO_CALLE;
 }
 
+#ifdef MODO_CALIBRACION
+// Comando serie 'E': mide P_ESTATICA_REAL durante 10 s con la bomba apagada (no la enciende).
+// Preparación: tanque a ~3 dedos del fondo, grifo abierto ~15 s y cerrado, B1 apagada.
+void calibrarEstatica() {
+  if (estado != REPOSO_PRESURIZADO || bombaEncendida) {
+    Serial.println(F("E: requiere REPOSO_PRESURIZADO con bomba apagada"));
+    return;
+  }
+  float suma = 0.0, pMin = 1000.0, pMax = 0.0;
+  uint16_t n = 0;
+  unsigned long t0 = millis();
+  while (millis() - t0 < 10000UL) {
+    wdt_reset();
+    float p = actualizarLecturaSensor();
+    if (!sensorValido) {
+      Serial.println(F("E: sensor invalido, medicion cancelada"));
+      return;
+    }
+    suma += p;
+    if (p < pMin) pMin = p;
+    if (p > pMax) pMax = p;
+    n++;
+    delay(100);
+  }
+  float prom = suma / n;
+  Serial.print(F("P_ESTATICA_REAL(prom):")); Serial.println(prom, 2);
+  Serial.print(F("min:")); Serial.print(pMin, 2);
+  Serial.print(F(" max:")); Serial.print(pMax, 2);
+  Serial.print(F(" dispersion:")); Serial.println(pMax - pMin, 2);
+  if (pMax - pMin > 0.5) Serial.println(F("AVISO: lectura inestable (grifo abierto o consumo?)"));
+  if (prom < 3.0) Serial.println(F("AVISO: estatica < 3 PSI, nivel demasiado bajo o sensor/altura incorrectos"));
+  Serial.print(F("Sugerido P_CAIDA_SECO = ")); Serial.println(prom - 1.2, 2);
+  Serial.print(F("Sugerida precarga pulmon = ")); Serial.println(prom + 0.4, 2);
+}
+#endif
+
 void setup() {
   // 1. Apagado inmediato en frío antes de habilitar salida
   digitalWrite(PIN_TRIAC_MOC, HIGH);
@@ -300,6 +340,10 @@ void loop() {
     Serial.print((int)estado);
     Serial.print(F(" | ArranquesHora:"));
     Serial.println(arranquesEnLaHora);
+  }
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == 'E' || c == 'e') calibrarEstatica();
   }
 #endif
 
