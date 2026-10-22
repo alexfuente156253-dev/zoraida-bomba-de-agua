@@ -12,7 +12,7 @@ Registro de las decisiones y razonamientos de calibración (v10.3). Los valores 
 
 1. Descomentar `#define MODO_CALIBRACION` en el `.ino`, subir con Arduino Community Edition o PlatformIO.
 2. Monitor serie a 9600 bps: imprime cada segundo `P2_PSI | Estado | ArranquesHora`.
-3. Estados: 0 REPOSO, 1 SONDEO, 2 BOMBEO, 3 VERIFICANDO, 4 ESPERA_SIN_FLUJO, 5 ENFRIAMIENTO, 6 FALLA_SENSOR.
+3. Estados: 0 REPOSO, 1 SONDEO, 2 BOMBEO, 3 VERIFICANDO, 4 ESPERA_SIN_FLUJO, 5 FALLA_SENSOR.
 4. Al terminar, volver a comentar `MODO_CALIBRACION` y subir la versión de producción.
 5. Aislamiento: no unir GND DC con neutro AC; con PC por USB usar aislamiento o calibrar sin la bomba en red.
 
@@ -119,3 +119,66 @@ Criterio del usuario: sin agua la bomba no puede acelerar la presión; una P2 pl
 ## Unificación: "bomba en vacío" = "sin flujo"
 
 Decisión del usuario: los dos escenarios son el mismo estado y el segundo detector era código redundante. Se eliminaron `P_CAIDA_SECO`, `T_CAVITACION_RAPIDA` y `t_caidaSeco`; el único criterio es `P2 <= P_SIN_FLUJO` (= `P_ESTATICA_MAX` + 0.5 PSI) durante `T_SIN_FLUJO` (10 s) con B1 encendida → `ESPERA_SIN_FLUJO` (antes `ESPERA_SIN_AGUA`). Cambio de comportamiento: un colapso total de presión ahora se declara a los 10 s y no a los 3 s. El comando `E` ya no sugiere `P_CAIDA_SECO`.
+
+## Modos de bombeo y aceleración de presión (implementado, **sin compilar ni probar**)
+
+Según las notas del usuario (docs/NOTAS_DEL_USUARIO.md, secciones 2, 2b y 2c):
+
+- **Arranque = verificación de flujo** (`SONDEO_CALLE`): subida sostenida de P2 con una **pendiente mínima única** `PENDIENTE_MIN_SUBIDA` (0.3 PSI/s), la misma que en hidroneumático.
+- **Modo LLENANDO TANQUE**: P2 en la presión de llenado `P_LLENADO` (10.2 PSI, SUPUESTO: calibrar con `L`) con histéresis ±0.5 PSI.
+- **Modo HIDRONEUMÁTICO**: P2 > `P_LLENADO + 0.5` (flotador cerrado). P2 debe seguir acelerando (≥ `PENDIENTE_MIN_SUBIDA` = 0.3 PSI/s en ventanas de 1 s). Pendiente medida en ventanas de 3 s (`T_VENTANA_PENDIENTE_HIDRO`). Si se estanca 10 s (`T_SIN_FLUJO`): **micro-pausa de prueba de modo**. Si P2 cae (≥ 0.8 PSI desde el pico, o cruza `P_ARRANQUE` hacia abajo) el agua sigue yendo al tanque: se aprende esa presión como `pLlenadoActual`, vuelve a LLENANDO y sigue bombeando. Si no cae (flotador cerrado): P2 ≥ `PISO_FLUJO_TOTAL` (= `P_ARRANQUE` + 1 = 10.5 PSI) → **presión de estancamiento** (`pEstancamiento`), REPOSO y re-arranca al bajar a `P_ARRANQUE`; por debajo → **sin flujo total** → `ESPERA_SIN_FLUJO`. `pLlenadoActual` vuelve al `P_LLENADO` calibrado en cada arranque. Vuelve a LLENANDO cuando P2 ≤ `pLlenadoActual`.
+- Al llegar a 20 PSI se corta y deja de monitorear hasta el siguiente arranque. Se mantienen la micro-pausa de verificación y el criterio único de sin flujo por nivel (`P_UMBRAL_FLUJO`).
+- El comando `L` ahora también sugiere `P_LLENADO`; el reporte serie de calibración muestra el modo.
+- Simulador: registra los cambios de modo y agrega el escenario `bomba_pierde_fuerza` (bomba débil con agua de calle cada vez más escasa).
+
+Ajustes posteriores (decisiones del usuario, sin compilar): pendiente única `PENDIENTE_MIN_SUBIDA` (sin tolerancia distinta en hidroneumático); el umbral de la verificación de arranque se limita al piso (se eliminó `P_TECHO_CEBADO_DINAMICO`); la micro-pausa usa el mismo piso que el estancamiento (se eliminó `P_CASI_LLENO_PAUSA`); el comando `L` sugiere `P_LLENADO` y `P_ARRANQUE`; el reporte serie muestra modo, `pLlenadoActual` y la presión de estancamiento. Nuevo escenario del simulador `llenado_alto` (calle a 12 psi, llenado ~11 psi).
+
+## Correcciones de incongruencias (pedido 30, sin compilar)
+
+1. **La espera sin flujo ya no reinicia `intentosFallidos`** solo porque P2 > `P_ARRANQUE` al terminar: puede ser presión retenida en el pulmón. Pasa a REPOSO conservando los intentos; si la siguiente verificación falla, la escalada 5/10/20 min continúa.
+2. **Umbral único de flujo** `P_UMBRAL_FLUJO` = `P_ESTATICA_MAX` + 1.0 PSI (regla del usuario: estática 7.5 → flujo sobre 8.5). Lo usan la verificación al arrancar y el criterio de sin flujo en bombeo (10 s). Se eliminó `P_SIN_FLUJO` (estática + 0.5), que dejaba una zona muerta.
+3. **`P_LLENADO` supuesto = 10.5 PSI** para cumplir la regla `P_ARRANQUE` ≤ `P_LLENADO` − 1.0 (banda 10.0–11.0; el piso 10.5 coincide con `P_LLENADO`). Se reemplaza al calibrar con `L`.
+4. **"Tope por software" → "presión de estancamiento"** (`pEstancamiento`): corrección de concepto del usuario. Es la presión intermedia donde la bomba pierde fuerza y su aceleración llega a 0 (ej. 15 PSI); ahí apaga y re-arranca al bajar a `P_ARRANQUE`. No es un corte aprendido. El tope máximo sigue siendo `P_MAX_OFF` (20 PSI).
+5. Textos "calle seca" → "sin flujo" en comentarios y LED.
+
+## Mesetas: micro-pausa en cada estancamiento en un nivel nuevo (pedido 35, sin compilar)
+
+Reemplaza los modos por banda fija (`P_LLENADO` ± `HISTERESIS_LLENADO`) y la prueba exclusiva de hidroneumático. Regla del usuario: **cada vez que la aceleración llega a 0** (10 s sin subir 0.3 PSI/s, ventanas de 3 s, `T_ESTANCAMIENTO`) **en un nivel nuevo** —primera vez en el ciclo o más de `MARGEN_NUEVO_NIVEL` (0.5 PSI) sobre la última meseta confirmada— se hace una micro-pausa de prueba:
+
+- **P2 cae** (≥ 0.8 PSI o cruza `P_ARRANQUE` hacia abajo): sigue llenando; ese nivel pasa a ser la meseta (`pMeseta`).
+- **No cae y P2 ≥ `PISO_FLUJO_TOTAL`**: terminó de llenar con bomba de poca potencia; apaga en esa presión de estancamiento y re-arranca en `P_ARRANQUE`.
+- **No cae y P2 < piso**: sin flujo total → `ESPERA_SIN_FLUJO`.
+- **Llega a 20 PSI**: corte normal, sin prueba.
+
+Estancarse en la misma meseta es llenado normal y no se prueba (la micro-pausa periódica sigue). Cualquier micro-pausa que confirma flujo fija la meseta. `pMeseta` se reinicia en cada arranque. El modo (LLENANDO / HIDRONEUMÁTICO) queda como etiqueta informativa: hidroneumático = P2 por encima de la meseta. Se eliminaron `P_LLENADO`, `HISTERESIS_LLENADO`, `pLlenadoActual` y `pausaPorEstancamiento`; `T_ESTANCAMIENTO` separa el tiempo de estancamiento de `T_SIN_FLUJO`. El comando `L` solo sugiere `P_ARRANQUE` (llenado − 1.0 PSI). Costo: una micro-pausa (y un arranque contado) al inicio de cada llenado y en cada nivel nuevo.
+
+## Estancamiento = la presión no sube; 18–20 PSI = lleno; bajar a la estática = sin flujo (pedido 38, sin compilar)
+
+- En bombeo, **estancada** significa que P2 no supera en 0.25 PSI (`SUBIDA_MIN_ESTANCAMIENTO`, ~1 cuenta) el máximo ya alcanzado durante 10 s (`T_ESTANCAMIENTO`). Una subida lenta (flotador que cierra poco a poco) sigue siendo subida y llega a 20 PSI sin micro-pausas. La pendiente de 0.3 PSI/s queda solo para la verificación al arrancar; se eliminó la ventana de 3 s en bombeo.
+- **Estancada entre 18 y 20 PSI** (`P_LLENO_ESTANCADO`): tanque lleno, corta sin micro-pausa.
+- **Estancada bajo 18 PSI en un nivel nuevo** (ej. 17): micro-pausa de prueba (llenando / bomba de poca potencia / sin flujo).
+- **La presión baja durante el llenado hasta la estática** (válvula abierta o calle agotada): sin flujo, en el momento en que ocurra (criterio único `P_UMBRAL_FLUJO` con 10 s de confirmación).
+- Falsas alarmas al arrancar con consumo: decisión del usuario = **instruir a los operadores** (README, "Uso para operadores"); no se cambia el código.
+
+## Micro-pausas periódicas solo durante el llenado (pedido 40, sin compilar)
+
+La verificación periódica (90/180/300 s) solo corre en modo LLENANDO TANQUE: meseta confirmada y P2 dentro de ella. En la subida inicial y en hidroneumático el intervalo no avanza; esos tramos los cubren el estancamiento (prueba en nivel nuevo, 18-20 PSI = lleno) y el corte a 20 PSI. El chequeo del presupuesto de arranques que estaba dentro de esta verificación también queda limitado al llenado (ver punto C pendiente).
+
+## Persistencia en EEPROM (pedido 43, sin compilar)
+
+Se guardan `intentosFallidos`, `arranquesEnLaHora` y si estaba en `PAUSA_ENFRIAMIENTO_MOTOR`, para que un corte o parpadeo de la luz no reinicie la escalada de esperas ni salte el límite de 18 arranques/h. Al volver la luz: si estaba en enfriamiento, lo repite completo; si había intentos fallidos, entra en `ESPERA_SIN_FLUJO` con la espera de ese nivel; el presupuesto de arranques continúa (sin reloj no se sabe cuánto duró el corte, se asume lo más conservador). Registro de 8 bytes con secuencia y suma de control, rotando en 64 posiciones (512 bytes); solo se escribe cuando algo cambia. Comando de calibración `R`: pone intentos y arranques en 0. El simulador usa un sustituto de EEPROM en RAM (`sim/arduino_stub/EEPROM.h`).
+
+## Eliminado: enfriamiento, límite de 45 min y presupuesto de arranques (pedido 45, sin compilar)
+
+Por decisión del usuario se eliminó `PAUSA_ENFRIAMIENTO_MOTOR` (descanso de 20 min) junto con lo que lo disparaba: el límite de 45 min de marcha continua (`T_MAX_BOMBEO`) y el presupuesto de 18 arranques/h (`arranquesEnLaHora`, `MAX_ARRANQUES_POR_HORA`, ventana horaria, crédito de 6). Se mantienen el anti-ciclado de 3 min entre arranques desde reposo y el retardo de 15 s al encender; la protección térmica queda a cargo del **relé térmico** (hardware). Estados: 0 REPOSO, 1 SONDEO, 2 BOMBEO, 3 VERIFICANDO, 4 ESPERA_SIN_FLUJO, 5 FALLA_SENSOR. La EEPROM guarda solo `intentosFallidos`. Se eliminó el escenario `limite_45min` del simulador y los conteos de arranques pasan a ser informativos. Quedan sin objeto los pendientes C (presupuesto al reanudar), ventana horaria fija y enfriamiento sin demanda.
+
+## Golpe de ariete, sin flujo inmediato, falla de sensor y tiempo máximo (pedido 50, sin compilar)
+
+1. **Micro-pausa:** la caída se mide desde la presión **en el instante de apagar** (`pInicioPausa`), ya no desde un pico, y se ignoran los primeros 0.5 s (`T_IGNORAR_INICIO_PAUSA`). Un repunte por golpe de ariete que luego se disipa ya no se confunde con flujo. El comando `F` informa la caída con el mismo criterio y muestra el pico solo como dato.
+2. **Sin flujo apenas toca la estática:** con flujo ya establecido, P2 ≤ `P_UMBRAL_FLUJO` durante 1 s (`T_SIN_FLUJO`) → sin flujo. Tras arrancar o reanudar (la micro-pausa deja P2 cerca de la estática) hay hasta 10 s (`T_SIN_FLUJO_REARRANQUE`) para que P2 supere el umbral; si no lo supera, también es sin flujo.
+3. **Falla de sensor:** al recuperarse, si había intentos fallidos pendientes vuelve a `ESPERA_SIN_FLUJO` (no se salta la escalada 5/10/20 min).
+4. **Tiempo máximo de bombeo: 45 min** (`T_MAX_BOMBEO`) desde que se confirma flujo sin llegar a lleno (red de seguridad ante fugas o grifos abiertos). Apaga y espera 20 min (intentos ≥ 3) antes de volver a verificar flujo. Escenario del simulador: `limite_45min`.
+
+## Compilación y simulación (pedido 55)
+
+Todo lo anterior marcado "sin compilar" quedó **compilado** (PlatformIO, ambos modos: producción 5.840 B flash / 92 B SRAM; calibración 13.274 B / 302 B) y **simulado** (10 de 14 escenarios pasan; las 4 fallas son la falsa alarma por consumo durante la verificación al arrancar, resuelta con instrucción a operadores). Error encontrado al compilar y corregido: la estructura `RegistroPersistente` debía declararse antes de cualquier función por los prototipos que genera el preprocesador de Arduino. Pendiente: probar en la placa real.

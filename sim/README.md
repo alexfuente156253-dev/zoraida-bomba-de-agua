@@ -35,7 +35,6 @@ Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre
 | `normal` | Llenado normal, micro-pausas | PASA |
 | `calle_seca` | Escalada de esperas 5/10/20/20 min | PASA |
 | `sensor_falla` | Cable suelto: falla en 1.5 s, bomba apagada, recuperación | PASA |
-| `limite_45min` | Corte a 45 min y enfriamiento de 20 min | PASA |
 | `base_baja` | Arranque desde la estática del tanque casi vacío | PASA con pulmón ≤ 12 L, FALLA con 20 L |
 | `pulmon_retenido` | Pulmón retenido a 9 psi por el Check #1, P2 plana, sin agua | PASA: nunca pasa a BOMBEO, declara sin agua |
 | `bomba_debil` | Llenado con la bomba degradada (cierre 25 psi) | PASA con pulmón ≤ 12 L (antes de la nueva detección fallaba con cualquier volumen) |
@@ -63,10 +62,28 @@ La bomba antes apenas cortaba el presostato a 30 psi y ahora solo llega a 25 psi
 
 ## Detección por subida sostenida de presión (criterio del usuario)
 
-Implementada en el firmware: en `SONDEO_CALLE` el cebado se confirma solo si P2 sube de forma sostenida (pendiente ≥ `PENDIENTE_MIN_CEBADO` = 0.3 psi/s en alguna ventana de 1 s) y supera `max(base + 1.5, P_ESTATICA_MAX + 1.0)` durante 1 s; ya no se exige llegar a `P_ARRANQUE`. En `BOMBEO_ACTIVO`, si P2 ≤ `P_ESTATICA_MAX + 0.5` durante 10 s con B1 encendida, se declara sin flujo. `P_ESTATICA_MAX` (7.1 psi) es un supuesto: medirlo con `E` con el tanque lleno.
+Implementada en el firmware: en `SONDEO_CALLE` el cebado se confirma solo si P2 sube de forma sostenida (pendiente ≥ `PENDIENTE_MIN_SUBIDA` = 0.3 psi/s en alguna ventana de 1 s; pendiente única, también en modo hidroneumático) y supera `max(base + 1.5, P_ESTATICA_MAX + 1.0)` durante 1 s; ya no se exige llegar a `P_ARRANQUE`. En `BOMBEO_ACTIVO`, si P2 ≤ `P_UMBRAL_FLUJO` (`P_ESTATICA_MAX` + 1.0) durante 10 s con B1 encendida, se declara sin flujo. `P_ESTATICA_MAX` (7.1 psi) es un supuesto: medirlo con `E` con el tanque lleno.
 
 Efecto en el simulador: bomba en vacío detectada en ~11 s; bomba debilitada ya llena el tanque; el pulmón retenido (P2 plana por encima de la estática) no se toma por flujo. **Sigue sin resolverse** la falsa alarma cuando la casa consume durante el sondeo (`consumo_normal`, `consumo_alto`, `ciclado_corto`): bajar el margen sobre la estática a 0.5 o 0.7 psi no lo arregla, así que el límite está en cuánto caudal se lleva la casa; hace falta el volumen real del pulmón y la curva de la bomba.
 
 ## Unificación: "bomba en vacío" = "sin flujo"
 
 Por criterio del usuario ambos casos son el mismo estado. Se eliminó el detector redundante `P_CAIDA_SECO` (P2 < 6.0 psi durante 3 s) con su temporizador; queda un único criterio: con B1 encendida, `P2 <= P_SIN_FLUJO` (estática máxima + 0.5 psi) durante 10 s → `ESPERA_SIN_FLUJO`. Consecuencia: el colapso total de presión se declara a los 10 s en lugar de 3 s (se puede reducir `T_SIN_FLUJO`). El escenario `bomba_vacio` pasó a llamarse `sin_flujo`; el estado `ESPERA_SIN_AGUA`, a `ESPERA_SIN_FLUJO`.
+
+## Mesetas (pedido 35)
+
+El firmware ya no usa `P_LLENADO` fijo: hace una micro-pausa de prueba cada vez que la aceleración llega a 0 en un nivel nuevo y aprende la meseta de llenado real. El escenario `llenado_alto` informa la meseta máxima confirmada. Resultados pendientes de compilar.
+
+## Sin enfriamiento (pedido 45)
+
+Se eliminaron del firmware el enfriamiento de 20 min, el límite de 45 min y el presupuesto de 18 arranques/h; se quitó el escenario `limite_45min` y los conteos de arranques son solo informativos.
+
+## Tiempo máximo de bombeo (pedido 50)
+
+Se repuso el escenario `limite_45min` con la regla nueva: a los 45 min de bombeo sin llegar a lleno apaga y espera 20 min (sin enfriamiento ni presupuesto de arranques).
+
+## Resultados con la versión compilada (pedido 55)
+
+Firmware y simulador compilados. **10 de 14 escenarios pasan**: `normal`, `calle_seca`, `sin_flujo` (detección a los ~2 s del corte), `sensor_falla`, `limite_45min`, `base_baja`, `pulmon_retenido`, `bomba_debil`, `llenado_alto` (meseta aprendida 11.0 psi) y `calle_vuelve`.
+
+Fallan `consumo_normal`, `consumo_alto`, `ciclado_corto` y `bomba_pierde_fuerza`, **todos por la misma causa conocida**: la casa consume justo durante los 4 s de verificación al arrancar, la presión sube más lento y se declara sin flujo (en `bomba_pierde_fuerza`, el arranque de 01:11:06 coincide con una ráfaga de consumo del escenario). Decisión del usuario (pedido 37): se resuelve con la instrucción a los operadores, no en el código. Dato informativo: sin presupuesto de arranques, `ciclado_corto` llega a 35 encendidos por hora (incluye reanudaciones tras micro-pausas). La presión máxima al cortar llega a ~27 psi en el modelo (corte a 20 psi con 2 s sostenidos; depende de la bomba real).

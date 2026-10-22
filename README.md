@@ -11,8 +11,8 @@ Sistema de control y protección hidráulica (triple check + pulmón) para una b
 
 | Modo | Flash | SRAM |
 |---|---|---|
-| Producción | 4.622 B (15,0 %) | 71 B (3,5 %) |
-| `MODO_CALIBRACION` (Serial 9600, comandos E L F S C X) | 12.240 B (39,8 %) | 276 B (13,5 %) |
+| Producción | 5.840 B (19,0 %) | 92 B (4,5 %) |
+| `MODO_CALIBRACION` (Serial 9600, comandos E L F S C X R) | 13.274 B (43,2 %) | 302 B (14,7 %) |
 
 (Las cifras de la versión anterior, ~3.146 B y ~5.128 B de flash, no se reprodujeron al compilar.)
 Compilar: `python -m platformio run` (entornos `nano_produccion` y `nano_calibracion`, ver [platformio.ini](platformio.ini)).
@@ -95,3 +95,7 @@ RED CALLE ===>|CHECK #0 |=====>|  BOMBA B1  |=====>|CHECK #1 |=====> (Nodo "T"1)
 ## Mediciones de campo
 
 Ver la tabla de 5 mediciones en la cabecera del `.ino` (P_ESTATICA_REAL, P_LLENADO_REAL, CAIDA_MIN_FLUJO_ACTIVO, P_SHUTOFF_REAL, T_CARGA_PULMON).
+
+## Uso para operadores
+
+- **Esperar a que la bomba apague antes de abrir válvulas o grifos** cuando se acaba de energizar. Durante los primeros segundos el control verifica que haya flujo midiendo la subida de presión; si la casa consume en ese momento, puede interpretar falta de agua y esperar 5 minutos antes de reintentar. Mientras tanto la casa recibe agua del tanque por gravedad.
