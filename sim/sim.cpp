@@ -65,17 +65,22 @@ struct Hyd {
   double R_chk2   = 5.0;    // psi/(L/s)^2, Check #2
   double V_tot    = 6.0;    // L, volumen del pulmon (SUPUESTO; probar --v-pulmon)
   double P_pre    = 5.4;    // psi, precarga de aire (manometrica)
+  double V_riser  = 2.5;    // L, agua que cabe en la tuberia de subida al tanque (SUPUESTO)
+  double A_tubo   = 0.5;    // L/m, bajada del tanque al nodo (se drena si el tanque queda vacio) (SUPUESTO)
   // --- estado ---
-  double h = 0.75, Vw = 0.0;
+  // h: nivel del tanque (m). Negativo = el tanque esta vacio y el agua baja por la tuberia de bajada,
+  // hasta h_min (tuberia vacia, ~0 psi en el sensor).
+  double h = 0.75, Vw = 0.0, v_riser = 2.5;
   bool   street_ok = true;
   double q_house_cmd = 0.0;
   // --- salidas del ultimo paso ---
   double P = 0.0, q_pump = 0.0, q_fill = 0.0, q_chk2 = 0.0, q_house = 0.0;
 
   double ptank(double hh) const { return P_base + PSI_PER_M * hh; }
+  double h_min() const { return -P_base / PSI_PER_M; }
   double pressureFromVw(double v) const {
     if (v >= 0.0) return (P_pre + P_ATM) * V_tot / (V_tot - v) - P_ATM;
-    return P_pre + 10.0 * v;                       // pulmon sin agua: linea rigida
+    return std::max(0.0, P_pre + 10.0 * v);       // pulmon sin agua: linea rigida, sin vacio
   }
   void setPressure(double P0) {
     Vw = (P0 >= P_pre) ? V_tot * (1.0 - (P_pre + P_ATM) / (P0 + P_ATM)) : (P0 - P_pre) / 10.0;
@@ -85,8 +90,20 @@ struct Hyd {
     P = pressureFromVw(Vw);
     double Ptop = ptank(tank_H);
     bool float_open = h < tank_H - 0.01;
-    q_fill = float_open ? orif(P - Ptop, R_fill) : 0.0;
-    q_chk2 = (h > 0.03) ? orif(ptank(h) - P, R_chk2) : 0.0;
+    // Subida al tanque: entra por arriba. Si esta llena, rebosa al tanque (con el flotador abierto); si la
+    // presion del nodo baja de su columna, la subida se vacia hacia el nodo (entra aire por el flotador).
+    double Pr = Ptop * (v_riser / V_riser);
+    double q_sube = 0.0;
+    q_fill = 0.0;
+    if (P > Pr) {
+      double q = orif(P - Pr, R_fill);
+      if (v_riser < V_riser - 1e-9) q_sube = q;
+      else if (float_open) q_fill = q;
+    } else if (v_riser > 1e-9 && float_open) {
+      q_sube = -orif(Pr - P, R_fill);
+    }
+    // Check #2: el tanque (o, ya vacio, la tuberia de bajada) alimenta el nodo por gravedad
+    q_chk2 = (h > h_min() + 0.01) ? orif(ptank(h) - P, R_chk2) : 0.0;
     q_pump = 0.0;
     if (street_ok) {
       if (pump_on) {
@@ -97,11 +114,12 @@ struct Hyd {
       }
     }
     q_house = q_house_cmd * std::min(1.0, std::max(0.0, P) / 2.0);
-    Vw += (q_pump + q_chk2 - q_fill - q_house) * dt;
-    Vw = std::min(V_tot - 0.5, std::max(-0.8, Vw));
-    double area_L_per_m = PI_ * (tank_D / 2) * (tank_D / 2) * 1000.0;
+    Vw += (q_pump + q_chk2 - q_fill - q_sube - q_house) * dt;
+    Vw = std::min(V_tot - 0.5, std::max(-P_pre / 10.0, Vw));
+    v_riser = std::min(V_riser, std::max(0.0, v_riser + q_sube * dt));
+    double area_L_per_m = (h > 0.0) ? PI_ * (tank_D / 2) * (tank_D / 2) * 1000.0 : A_tubo;
     h += (q_fill - q_chk2) * dt / area_L_per_m;
-    h = std::min(tank_H, std::max(0.0, h));
+    h = std::min(tank_H, std::max(h_min(), h));
     P = pressureFromVw(Vw);
   }
 };
@@ -115,7 +133,7 @@ struct Ev { double t; int from, to; double P, h, dry; int intentos; };
 struct Res {
   std::vector<Ev> ev;
   std::vector<std::pair<double, bool>> pump;   // (t, encendida)
-  double pump_on_s = 0, dry_s = 0, maxP = 0, minP = 1e9, t_full = -1, end = 0;
+  double pump_on_s = 0, dry_s = 0, maxP = 0, minP = 1e9, t_full = -1, t_vacio = -1, end = 0;
   int final_state = 0, final_int = 0;
   double final_h = 0, final_P = 0, maxPll = 0;
 };
@@ -130,6 +148,7 @@ struct Scn {
   double tankD = 0.8;       // m, diametro del tanque
   double H0psi = -1;        // >0 sustituye la altura de cierre de la bomba
   std::function<double(double)> pstreet = nullptr;  // presion de la calle variable en el tiempo
+  double riser0 = 1.0;      // fraccion de la subida llena al inicio
 };
 
 static bool g_ok = true;
@@ -176,8 +195,9 @@ static std::vector<Scn> escenarios() {
   std::vector<Scn> v;
   v.push_back({"normal", "Llenado normal: tanque al 50%, calle OK, casa sin consumo (1 h)",
                3600, 0.75, 7.10, siempre, nada, sinFalla});
-  v.push_back({"calle_seca", "Calle seca desde el inicio: escalada de esperas 5/10/20 min (3 h)",
-               10800, 0.75, 7.10, [](double) { return false; }, nada, sinFalla});
+  v.push_back({"calle_seca", "Calle seca desde el inicio y la casa consume (0.15 L/s 60 s cada 3 min): el tanque se vacia (4 h)",
+               14400, 0.75, 7.10, [](double) { return false; },
+               [](double t) { return (t >= 120 && fmod(t - 120, 180.0) < 60.0) ? 0.15 : 0.0; }, sinFalla});
   v.push_back({"sin_flujo", "La calle se corta a los 300 s en pleno llenado: la bomba queda sin flujo (50 min)",
                3000, 0.40, 7.10, [](double t) { return t < 300.0; }, nada, sinFalla});
   v.push_back({"consumo_normal", "Tanque lleno, pulmon a 20 psi, la casa consume 0.25 L/s entre 60 y 300 s",
@@ -210,6 +230,12 @@ static std::vector<Scn> escenarios() {
     sc.pstreet = [](double) { return 12.0; };
     v.push_back(sc);
   }
+  {
+    Scn sc{"vuelve_tanque_vacio", "Tanque y tuberias vacios (~0.5 psi), vuelve el agua de la calle: debe recuperarse (1 h)",
+           3600, -3.4, 0.5, siempre, nada, sinFalla};
+    sc.riser0 = 0.0;
+    v.push_back(sc);
+  }
   v.push_back({"calle_vuelve", "Calle seca los primeros 30 min y luego regresa (2 h)",
                7200, 0.50, 7.10, [](double t) { return t >= 1800.0; }, nada, sinFalla});
   return v;
@@ -224,7 +250,7 @@ static void evaluar(const std::string& n, const Res& r) {
     check(idxTo(r, S_FALLA).empty(), "sin fallas espurias");
     info("arranques en la hora (maximo en cualquier ventana de 60 min): %d", startsInWindow(r, 3600));
     info("esperas 'sin agua' con calle OK: %zu (el sondeo de 4 s exige llegar a P_ARRANQUE; depende del volumen del pulmon, ver --v-pulmon)", esp.size());
-    info("presion maxima %.1f psi: el corte a 20 psi exige 2 s sostenidos; el sobrepico depende de la altura de cierre de la bomba y del pulmon", r.maxP);
+    info("presion maxima %.1f psi (corte instantaneo a 20 psi)", r.maxP);
   } else if (n == "calle_seca") {
     check(esp.size() >= 4, "al menos 4 esperas (hubo %zu)", esp.size());
     const double exp[4] = {300, 600, 1200, 1200};
@@ -235,7 +261,8 @@ static void evaluar(const std::string& n, const Res& r) {
     double mx = 0;
     for (size_t i : idxTo(r, S_SONDEO)) mx = std::max(mx, durAfter(r, i));
     check(mx <= 7.0, "sondeo mas largo %.1f s (<=7)", mx);
-    check(r.minP >= 4.5, "la casa conserva presion por gravedad (minimo %.1f psi)", r.minP);
+    info("tanque vacio en %s; presion minima %.1f psi (tuberias vaciandose)",
+         r.t_vacio >= 0 ? hms(r.t_vacio).c_str() : "nunca", r.minP);
   } else if (n == "sin_flujo") {
     const double tFail = 300.0;
     double tDet = -1, dryDet = -1;
@@ -322,6 +349,12 @@ static void evaluar(const std::string& n, const Res& r) {
     check(topes == 0, "no apaga por estancamiento mientras el flotador esta abierto (cortes: %d)", topes);
     check(idxTo(r, S_ESPERA).empty(), "sin esperas por falta de flujo");
     info("meseta de llenado confirmada maxima: %.1f psi", r.maxPll);
+  } else if (n == "vuelve_tanque_vacio") {
+    double tB = -1;
+    for (size_t i : idxTo(r, S_BOMBEO)) { tB = r.ev[i].t; break; }
+    info("verificaciones fallidas antes de bombear: %zu", esp.size());
+    check(tB >= 0 && tB <= 1800.0, "empieza a bombear en <= 30 min (a los %s)", tB >= 0 ? hms(tB).c_str() : "nunca");
+    check(r.final_h > 0.2, "el tanque se recupera (h final %.2f m)", r.final_h);
   } else if (n == "calle_vuelve") {
     double tB = -1;
     for (size_t i : idxTo(r, S_BOMBEO)) if (r.ev[i].t >= 1800.0) { tB = r.ev[i].t; break; }
@@ -359,9 +392,9 @@ int main(int argc, char** argv) {
   printf("Supuestos: calle %.1f psi, pulmon %.0f L precarga %.1f psi, bomba H0=%.0f psi\n",
          proto.P_street, proto.V_tot, proto.P_pre, proto.H0);
 
-  Hyd hyd = proto; hyd.tank_D = S->tankD; if (S->H0psi > 0) hyd.H0 = S->H0psi; hyd.h = S->h0; hyd.setPressure(S->P0);
+  Hyd hyd = proto; hyd.v_riser = hyd.V_riser * S->riser0; hyd.tank_D = S->tankD; if (S->H0psi > 0) hyd.H0 = S->H0psi; hyd.h = S->h0; hyd.setPressure(S->P0);
   FILE* csv = csvPath.empty() ? nullptr : fopen(csvPath.c_str(), "w");
-  if (csv) fprintf(csv, "t,estado,bomba,P_real,P_fw,h,q_pump,q_fill,q_chk2,q_house,calle\n");
+  if (csv) fprintf(csv, "t,estado,bomba,P_real,P_fw,h,q_pump,q_fill,q_chk2,q_house,calle,modo\n");
 
   g_psi_sensor = hyd.P;
   sim_millis = 0;
@@ -371,7 +404,7 @@ int main(int argc, char** argv) {
   const double dtc = 0.010;
   long steps = (long)(S->duration / dtc);
   int prev = (int)estado; bool prevPump = false; double nextCsv = 0.0;
-  bool prevModo = modoHidroneumatico;
+  int prevModo = modoBombeo;
   for (long i = 0; i < steps; i++) {
     double t = i * dtc;
     hyd.street_ok = S->street(t);
@@ -390,6 +423,7 @@ int main(int argc, char** argv) {
     r.maxP = std::max(r.maxP, hyd.P); r.minP = std::min(r.minP, hyd.P);
     r.maxPll = std::max(r.maxPll, (double)pMeseta);
     if (r.t_full < 0 && hyd.h >= 1.49) r.t_full = t;
+    if (r.t_vacio < 0 && hyd.h <= 0.0) r.t_vacio = t;
     if (pump_on != prevPump) { r.pump.push_back({t, pump_on}); prevPump = pump_on; }
     if ((int)estado != prev) {
       Ev e{t, prev, (int)estado, hyd.P, hyd.h, r.dry_s, (int)intentosFallidos};
@@ -399,16 +433,19 @@ int main(int argc, char** argv) {
                NOMBRE_ESTADO[prev], NOMBRE_ESTADO[(int)estado], hyd.P, hyd.h, e.intentos);
       prev = (int)estado;
     }
-    if (modoHidroneumatico != prevModo) {
+    if ((int)modoBombeo != prevModo) {
       if (!quiet)
         printf("[%s]   modo -> %s | P=%5.2f psi h=%.2f m\n", hms(t).c_str(),
-               modoHidroneumatico ? "HIDRONEUMATICO" : "LLENANDO_TANQUE", hyd.P, hyd.h);
-      prevModo = modoHidroneumatico;
+               modoBombeo == MODO_LLENANDO ? "LLENANDO_TANQUE"
+               : modoBombeo == MODO_HIDRONEUMATICO ? "HIDRONEUMATICO" : "SUBIENDO", hyd.P, hyd.h);
+      prevModo = modoBombeo;
     }
     if (csv && t >= nextCsv) {
       nextCsv += 1.0;
-      fprintf(csv, "%.0f,%s,%d,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%d\n", t, NOMBRE_ESTADO[(int)estado], pump_on,
-              hyd.P, presionFiltrada, hyd.h, hyd.q_pump, hyd.q_fill, hyd.q_chk2, hyd.q_house, hyd.street_ok);
+      static const char* NOMBRE_MODO[] = {"SUBIENDO", "LLENANDO", "HIDRONEUMATICO"};
+      fprintf(csv, "%.0f,%s,%d,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%s\n", t, NOMBRE_ESTADO[(int)estado], pump_on,
+              hyd.P, presionFiltrada, hyd.h, hyd.q_pump, hyd.q_fill, hyd.q_chk2, hyd.q_house, hyd.street_ok,
+              NOMBRE_MODO[modoBombeo <= 2 ? modoBombeo : 0]);
     }
   }
   if (csv) fclose(csv);

@@ -13,6 +13,7 @@ Archivo vivo: se agrega aquí lo que el usuario va indicando (hechos de la insta
 - **Presión estática = un rango**: [estática con el tanque vacío, estática con el tanque lleno].
 - Al apagar la bomba durante el llenado, el flujo se detiene y la presión queda en el rango de agua estática.
 - Cuando el tanque se llena y cierra el flotador de llenado, la presión sube a **20 PSI** y se apaga la bomba. Al descender la presión y descargarse el pulmón, enciende la bomba.
+- Con la **calle seca y el tanque totalmente vacío**, la presión en el sensor baja a **~1 PSI** (dato del usuario, pedido 63).
 - **Bomba degradada**: antes apenas hacía cortar el presostato (termostato) a **30 PSI**; ahora solo llega a **25 PSI**. Ha perdido potencia.
 - Se usará **Arduino** (Nano) y **VS Code** para el proyecto.
 - Chrome del usuario con depuración remota en `127.0.0.1:9222` (sin túnel); sesión de GitHub iniciada por el usuario. Cuenta GitHub: `alexfuente156253-dev`.
@@ -145,6 +146,20 @@ Transcripción ordenada de lo que el usuario explicó (nada de esto está implem
 
 54. Preguntó si se aplicó "la presión no sube" → sí (pedido 38), mostrado en el código.
 55. **Ordenó compilar y subir.** Compilado (se corrigió un error: `RegistroPersistente` debía ir antes de las funciones) y simulado: 10 de 14 escenarios pasan; las 4 fallas son el caso de consumo durante el arranque (instrucción a operadores). Subido a GitHub.
+56. Pidió graficar las presiones en los diferentes puntos de operación: tablero en claude.ai (Presiones de la bomba B1, https://claude.ai/artifact/LHdutAguvTTPhEvkx9T5CU) con seis escenarios del simulador, umbrales del firmware y tabla de presión por punto de operación.
+57. Al ver la gráfica preguntó por qué, si el corte es en 20 PSI, la presión sube a 27 PSI (sobrepico por los 2 s de confirmación del corte).
+58. Pidió aplicar la **opción 1**: **cortar al llegar a 20 PSI, sin los 2 s de espera**. Aplicado (se eliminaron `T_CORTE_20PSI` y `t_corteAlta`). **Sin compilar.**
+59. Al ver que el tablero seguía mostrando 27 PSI (datos viejos), ordenó **proceder**: compilado (producción 5.656 B), simulado (presión máxima 20.1–20.2 PSI, antes 27.2) y **tablero actualizado** con los datos nuevos. Cambios en el repositorio sin subir.
+60. Pidió analizar la gráfica del escenario bomba que pierde fuerza (falsa espera sin flujo al final por consumo durante la verificación al arrancar).
+61. Preguntó por qué la presión siempre empieza en (o cerca de) la estática antes de cada arranque.
+62. Pidió **añadir archivos de depuración** al programa; eligió **ambas** opciones: registro de eventos en la EEPROM (sobrevive a cortes de luz) y bitácora por USB guardada en archivos de la PC (`MODO_DEPURACION`, entorno `nano_depuracion`, script `tools/depurar.py`). **Sin compilar.**
+
+63. Señaló que con la **calle seca desde el inicio la presión bajaría a ~1 PSI con el tanque totalmente vacío** (la gráfica la mostraba fija en 7.1). Dato del usuario: tanque vacío ≈ 1 PSI en el sensor. Se corrigió el modelo del simulador (subida y bajada que se drenan, consumo en el escenario) y se agregó el escenario `vuelve_tanque_vacio`. **Sin compilar.**
+64. Preguntó si la gráfica de la bomba que pierde fuerza está en modo hidroneumático o llenado.
+
+65. Aprobó el **modo de bombeo con tres valores** (subiendo / llenando / hidroneumático), para que un ciclo con el tanque lleno no se etiquete como llenado. Aplicado. **Sin compilar.**
+
+66. Ordenó **compilar, graficar y subir**. Compilados los tres entornos (producción 6.482 B, calibración 13.878 B, depuración 9.048 B); simulador 11 de 15 (fallas = consumo al arrancar); tablero actualizado con el modo en el cursor y la gráfica nueva "Vuelve el agua con el tanque vacío"; subido a GitHub.
 
 ## 4. Pendientes por decidir / datos que faltan
 

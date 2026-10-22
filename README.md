@@ -11,8 +11,9 @@ Sistema de control y protección hidráulica (triple check + pulmón) para una b
 
 | Modo | Flash | SRAM |
 |---|---|---|
-| Producción | 5.840 B (19,0 %) | 92 B (4,5 %) |
-| `MODO_CALIBRACION` (Serial 9600, comandos E L F S C X R) | 13.274 B (43,2 %) | 302 B (14,7 %) |
+| Producción | 6.482 B (21,1 %) | 95 B (4,6 %) |
+| `MODO_CALIBRACION` (Serial 9600, comandos E L F S C X R) | 13.878 B (45,2 %) | 304 B (14,8 %) |
+| `MODO_DEPURACION` (eventos, telemetría, comandos D B) | 9.048 B (29,5 %) | 290 B (14,2 %) |
 
 (Las cifras de la versión anterior, ~3.146 B y ~5.128 B de flash, no se reprodujeron al compilar.)
 Compilar: `python -m platformio run` (entornos `nano_produccion` y `nano_calibracion`, ver [platformio.ini](platformio.ini)).
@@ -99,3 +100,9 @@ Ver la tabla de 5 mediciones en la cabecera del `.ino` (P_ESTATICA_REAL, P_LLENA
 ## Uso para operadores
 
 - **Esperar a que la bomba apague antes de abrir válvulas o grifos** cuando se acaba de energizar. Durante los primeros segundos el control verifica que haya flujo midiendo la subida de presión; si la casa consume en ese momento, puede interpretar falta de agua y esperar 5 minutos antes de reintentar. Mientras tanto la casa recibe agua del tanque por gravedad.
+
+## Depuración
+
+- **Registro de eventos en la EEPROM (siempre activo):** cada cambio de estado se guarda con su motivo, la presión y los intentos fallidos. Se conservan los últimos 46 eventos y sobreviven a cortes de luz.
+- **Modo de depuración por USB:** compilar y subir el entorno `nano_depuracion` (`python -m platformio run -e nano_depuracion -t upload --upload-port COMx`). Envía cada evento y una telemetría por segundo, y acepta los comandos `D` (descargar registro) y `B` (borrar registro). Subir el firmware no borra la EEPROM, así que el registro hecho en producción se puede leer después.
+- **Script de PC:** [tools/depurar.py](tools/depurar.py) guarda todo en `data/depuracion/` (eventos, telemetría, registro descargado y la salida serie cruda). Esa carpeta no se sube a git.

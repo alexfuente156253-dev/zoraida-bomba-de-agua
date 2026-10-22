@@ -182,3 +182,20 @@ Por decisión del usuario se eliminó `PAUSA_ENFRIAMIENTO_MOTOR` (descanso de 20
 ## Compilación y simulación (pedido 55)
 
 Todo lo anterior marcado "sin compilar" quedó **compilado** (PlatformIO, ambos modos: producción 5.840 B flash / 92 B SRAM; calibración 13.274 B / 302 B) y **simulado** (10 de 14 escenarios pasan; las 4 fallas son la falsa alarma por consumo durante la verificación al arrancar, resuelta con instrucción a operadores). Error encontrado al compilar y corregido: la estructura `RegistroPersistente` debía declararse antes de cualquier función por los prototipos que genera el preprocesador de Arduino. Pendiente: probar en la placa real.
+
+## Corte instantáneo a 20 PSI (pedido 58; compilado y simulado en el pedido 59)
+
+El corte ya no exige 2 s sostenidos en `P_MAX_OFF` (`T_CORTE_20PSI`): apaga en cuanto P2 llega a 20 PSI, en la verificación al arrancar y en bombeo. Con la espera de 2 s la bomba seguía empujando contra el flotador cerrado y en el simulador la presión llegaba a ~27 PSI (sobrepico). Se eliminaron `T_CORTE_20PSI` y `t_corteAlta`. El ruido lo filtran el promedio de 64 lecturas y el filtro EMA del sensor.
+
+Resultado (pedido 59): presión máxima en el simulador **20.1–20.2 PSI** (antes 27.2 PSI). Firmware: producción 5.656 B flash / 88 B SRAM; calibración 13.076 B / 298 B. Escenarios: siguen 10 de 14 (las 4 fallas son el consumo durante la verificación al arrancar).
+
+## Depuración: registro de eventos y modo `MODO_DEPURACION` (pedido 62; compilado en el pedido 66)
+
+- **Registro en EEPROM (todos los modos):** bytes 512–1023 (la mitad baja es la persistencia de intentos). Evento de 11 bytes: segundos desde el encendido, secuencia, P2 (décimas de PSI), estado nuevo, motivo e intentos; 46 posiciones rotativas. Se escribe en cada cambio de estado y en cada encendido. Desgaste estimado: ~10 años a 60 eventos/h.
+- **Motivos** (`MotivoEvento`, valores fijos): 1 encendido, 2 demanda, 3 flujo confirmado, 4 verificación sin subida, 5 corte a 20 PSI, 6 lleno por estancamiento 18–20, 7 prueba en nivel nuevo, 8 micro-pausa periódica, 9 la presión cayó (sigue llenando), 10 estancamiento sobre el piso, 11 sin flujo bajo el piso, 12 sin flujo en la estática, 13 tiempo máximo, 14 fin de espera a reposo, 15 reintento, 16 falla de sensor, 17 sensor recuperado, 18 fin de calibración.
+- **`MODO_DEPURACION`** (entorno `nano_depuracion`): línea `EV,secuencia,t_s,estado,motivo,p2,intentos` en cada evento; `TL,t_s,estado,p2,bomba,modo,meseta,intentos` (modo 0 subiendo, 1 llenando, 2 hidroneumático) cada segundo; comandos `D` (`LOG_INICIO` … `LOG,…` … `LOG_FIN`) y `B` (`LOG_BORRADO`).
+- **`tools/depurar.py`:** `monitor`, `descargar` y `borrar`; archivos en `data/depuracion/` (ignorada por git).
+
+## Modo de bombeo con tres valores (pedido 65; compilado en el pedido 66)
+
+`modoBombeo` reemplaza a `modoHidroneumatico`: **SUBIENDO** (bomba encendida sin meseta confirmada), **LLENANDO** (meseta confirmada y P2 en ella) e **HIDRONEUMÁTICO** (P2 sobre la meseta, o el ciclo terminó arriba: corte a 20 PSI, lleno por estancamiento o presión de estancamiento, aunque nunca se haya confirmado una meseta). Antes, con el tanque lleno y sin meseta confirmada la etiqueta decía "llenando". Es informativo (reporte serie, telemetría y simulador); la micro-pausa periódica sigue corriendo solo en LLENANDO.

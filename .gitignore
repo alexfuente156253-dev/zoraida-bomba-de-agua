@@ -5,3 +5,4 @@ build/
 .vscode/
 .pio/
 __pycache__/
+data/depuracion/

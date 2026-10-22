@@ -87,3 +87,15 @@ Se repuso el escenario `limite_45min` con la regla nueva: a los 45 min de bombeo
 Firmware y simulador compilados. **10 de 14 escenarios pasan**: `normal`, `calle_seca`, `sin_flujo` (detección a los ~2 s del corte), `sensor_falla`, `limite_45min`, `base_baja`, `pulmon_retenido`, `bomba_debil`, `llenado_alto` (meseta aprendida 11.0 psi) y `calle_vuelve`.
 
 Fallan `consumo_normal`, `consumo_alto`, `ciclado_corto` y `bomba_pierde_fuerza`, **todos por la misma causa conocida**: la casa consume justo durante los 4 s de verificación al arrancar, la presión sube más lento y se declara sin flujo (en `bomba_pierde_fuerza`, el arranque de 01:11:06 coincide con una ráfaga de consumo del escenario). Decisión del usuario (pedido 37): se resuelve con la instrucción a los operadores, no en el código. Dato informativo: sin presupuesto de arranques, `ciclado_corto` llega a 35 encendidos por hora (incluye reanudaciones tras micro-pausas). La presión máxima al cortar llega a ~27 psi en el modelo (corte a 20 psi con 2 s sostenidos; depende de la bomba real).
+
+## Corte instantáneo a 20 psi (pedido 59)
+
+Sin la espera de 2 s, la presión máxima en todos los escenarios queda en 20.1–20.2 psi (antes ~27 psi en `normal`). Siguen 10 de 14 escenarios en PASA.
+
+## Tanque vacío y tuberías que se drenan (pedido 63)
+
+Observación del usuario: con la calle seca y el tanque totalmente vacío la presión bajaría a ~1 psi; el modelo la dejaba fija en 7.1 psi. Cambios en el modelo: la **tubería de subida** (2.5 L supuestos) se vacía hacia la casa cuando la presión baja de su columna y el flotador está abierto; con el tanque vacío el agua sigue bajando por la **tubería de bajada** (0.5 L/m supuestos) hasta ~0 psi; el pulmón ya no puede dar presión negativa. El escenario `calle_seca` ahora tiene consumo (0.15 L/s 60 s cada 3 min, 4 h) y el tanque se vacía. Nuevo escenario `vuelve_tanque_vacio`: vuelve el agua con tanque y tuberías vacíos.
+
+## Resultados (pedido 66)
+
+Firmware compilado en los tres entornos (producción, calibración y depuración). **11 de 15 escenarios pasan**. Nuevos: `calle_seca` con consumo vacía el tanque a las 2:08 y la presión cae a ~0 psi; `vuelve_tanque_vacio` se recupera sin ninguna falsa alarma (la sospecha de que rellenar la subida haría fallar la verificación de 4 s no se confirmó). Las 4 fallas siguen siendo el consumo durante la verificación al arrancar. El CSV del simulador incluye la columna `modo` (subiendo, llenando, hidroneumático).

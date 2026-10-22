@@ -61,10 +61,26 @@ struct RegistroPersistente {
   uint8_t  verificacion;  // Suma de control
 };
 
+// Evento del registro de depuración en EEPROM (ver "REGISTRO DE EVENTOS").
+struct EventoLog {
+  uint32_t t_s;         // Segundos desde el encendido
+  uint16_t secuencia;   // Crece en cada evento; 0xFFFF = posición vacía
+  int16_t  p_x10;       // P2 en décimas de PSI
+  uint8_t  estado;      // Estado nuevo (EstadoSistema)
+  uint8_t  motivo;      // Motivo del cambio (MotivoEvento)
+  uint8_t  intentos;    // intentosFallidos en ese momento
+};
+
+// Depuración por USB: con MODO_DEPURACION (entorno PlatformIO nano_depuracion) cada evento y una
+// telemetría por segundo salen por el puerto serie a 9600, y los comandos D (descargar registro) y
+// B (borrar registro) quedan disponibles. El registro en EEPROM se escribe siempre, en todos los modos.
+// #define MODO_DEPURACION
+
 // Descomentar SOLO durante las pruebas de calibración con PC conectada.
 // Uso de recursos en ATmega328P (medido con PlatformIO):
-//   - Desactivado (Producción): Flash = 5840 bytes (19.0%), SRAM = 92 bytes (4.5%)
-//   - Activado (Calibración):   Flash = 13274 bytes (43.2%), SRAM = 302 bytes (14.7%)
+//   - Desactivado (Producción): Flash = 6482 bytes (21.1%), SRAM = 95 bytes (4.6%)
+//   - Activado (Calibración):   Flash = 13878 bytes (45.2%), SRAM = 304 bytes (14.8%)
+//   - MODO_DEPURACION:          Flash = 9048 bytes (29.5%), SRAM = 290 bytes (14.2%)
 // #define MODO_CALIBRACION
 
 // ================= PROTECCIÓN BOOTLOADER ANTIGUO (WDT BUG) =================
@@ -146,7 +162,6 @@ const unsigned long T_IGNORAR_INICIO_PAUSA = 500UL; // Primeros 0.5 s de la paus
 const unsigned long T_PRUEBA_CEBADO      = 4000UL;   // 4.0 seg máx en SONDEO_CALLE (Check #0 mantiene B1 cebada)
 const unsigned long T_MAX_SONDEO_ABS     = 6500UL;   // 6.5 seg techo absoluto en SONDEO_CALLE ante oscilaciones
 const unsigned long T_CONFIRMA_CEBADO    = 1000UL;   // 1.0 seg sosteniendo el Delta P confirma flujo hacia pulmón
-const unsigned long T_CORTE_20PSI        = 2000UL;   // 2.0 seg sosteniendo >= 20 PSI (carga completa del pulmón)
 const unsigned long T_DEMANDA            = 1200UL;   // 1.2 seg bajo 9.5 PSI para confirmar descarga del pulmón
 
 // Intervalos Adaptativos de Micro-Pausa (cubre toda la franja de 9.5 a 19.9 PSI)
@@ -180,10 +195,35 @@ enum EstadoSistema {
 
 EstadoSistema estado = REPOSO_PRESURIZADO;
 
+// Motivo de cada cambio de estado, para el registro de eventos. Los valores no cambian entre versiones
+// (el script tools/depurar.py los traduce): agregar nuevos al final.
+enum MotivoEvento : uint8_t {
+  M_NINGUNO = 0,
+  M_ENCENDIDO,            // 1  Encendido del Arduino
+  M_DEMANDA,              // 2  P2 bajó a P_ARRANQUE: arranca la verificación de flujo
+  M_FLUJO_CONFIRMADO,     // 3  La verificación confirmó flujo: bombeo
+  M_SIN_SUBIDA,           // 4  La verificación no vio subida sostenida: sin flujo
+  M_CORTE_20,             // 5  P2 llegó a P_MAX_OFF: corte
+  M_LLENO_ESTANCADO,      // 6  Estancada entre 18 y 20 PSI: tanque lleno
+  M_PRUEBA_NIVEL_NUEVO,   // 7  Estancada en un nivel nuevo: micro-pausa de prueba
+  M_PAUSA_PERIODICA,      // 8  Micro-pausa periódica del llenado
+  M_PAUSA_CON_CAIDA,      // 9  En la micro-pausa la presión cayó: sigue llenando
+  M_ESTANCAMIENTO,        // 10 No cayó, sobre el piso: bomba de poca potencia, reposo
+  M_SIN_FLUJO_PAUSA,      // 11 No cayó, bajo el piso: sin flujo total
+  M_SIN_FLUJO_NIVEL,      // 12 Con la bomba encendida P2 bajó al umbral de flujo: sin flujo
+  M_TIEMPO_MAXIMO,        // 13 45 min de bombeo sin llegar a lleno
+  M_FIN_ESPERA_REPOSO,    // 14 Terminó la espera con presión en el pulmón: reposo
+  M_REINTENTO,            // 15 Terminó la espera: nueva verificación de flujo
+  M_FALLA_SENSOR,         // 16 Sensor desconectado o en corto
+  M_SENSOR_RECUPERADO,    // 17 El sensor volvió a leer bien
+  M_CALIBRACION           // 18 Fin de una prueba de calibración
+};
+uint8_t motivo = M_NINGUNO;               // Se fija junto a cada cambio de estado
+EstadoSistema estadoRegistrado = REPOSO_PRESURIZADO;
+
 // Temporizadores dedicados e independientes
 unsigned long t_inicioEstado        = 0;
 unsigned long t_condicion           = 0;
-unsigned long t_corteAlta           = 0;
 unsigned long t_ultimaVerificacion  = 0;
 unsigned long t_inicioPausaVerif    = 0;
 unsigned long t_ultimoArranque      = 0;
@@ -194,6 +234,9 @@ unsigned long t_estancamiento       = 0; // Última vez que P2 aceleró en modo 
 
 #ifdef MODO_CALIBRACION
 unsigned long t_reporteSerial       = 0;
+#endif
+#ifdef MODO_DEPURACION
+unsigned long t_telemetria          = 0;
 #endif
 
 bool bombaEncendida             = false;
@@ -215,8 +258,12 @@ float pInicioPausa         = 12.0; // P2 en el instante de apagar para la micro-
 bool sensorValido          = true;
 float pVentanaPendiente    = 0.0;  // P2 al inicio de la ventana de pendiente (SONDEO_CALLE)
 bool subidaCebado          = false; // true si en alguna ventana de 1 s P2 subió >= la pendiente mínima
-// Modo de bombeo (informativo): false = LLENANDO TANQUE (en la meseta), true = HIDRONEUMÁTICO (sobre ella).
-bool modoHidroneumatico    = false;
+// Modo de bombeo (informativo: reporte serie y depuración; el control no depende de él):
+//   SUBIENDO       bomba encendida, todavía sin meseta de llenado confirmada
+//   LLENANDO       meseta confirmada y P2 en ella
+//   HIDRONEUMATICO P2 sobre la meseta, o el ciclo terminó arriba (corte, lleno o estancamiento)
+enum ModoBombeo : uint8_t { MODO_SUBIENDO = 0, MODO_LLENANDO = 1, MODO_HIDRONEUMATICO = 2 };
+uint8_t modoBombeo         = MODO_SUBIENDO;
 bool flujoSobreUmbral      = false; // true cuando P2 ya superó P_UMBRAL_FLUJO desde el (re)arranque
 // Presión de estancamiento: donde la bomba perdió fuerza y su aceleración llegó a 0 sin alcanzar P_MAX_OFF
 // (ej. 15 PSI). Ahí se apaga y re-arranca al bajar a P_ARRANQUE. Informativo (reporte serie de calibración).
@@ -276,6 +323,90 @@ void guardarPersistenciaSiCambio() {
   slotEeprom = (slotEeprom + 1) % SLOTS_EEPROM;
   EEPROM.put(slotEeprom * sizeof(RegistroPersistente), r);
   intentosGuardados = intentosFallidos;
+}
+
+// ================= REGISTRO DE EVENTOS (DEPURACIÓN, SOBREVIVE A CORTES DE LUZ) =================
+// Cada cambio de estado se guarda con su motivo, la presión y los intentos, en la mitad alta de la EEPROM
+// (bytes 512-1023; la baja es de la persistencia). Rota entre las posiciones disponibles (46 eventos de
+// 11 bytes): se conservan siempre los últimos. Desgaste: cada posición se reescribe una vez cada 46
+// eventos; con ~60 eventos por hora son ~10 años hasta las 100.000 escrituras por celda.
+const uint16_t LOG_BASE  = 512;
+const uint8_t  LOG_SLOTS = (1024 - LOG_BASE) / sizeof(EventoLog);
+
+uint16_t secuenciaLog = 0;
+uint8_t  slotLog      = 0;
+
+// Al encender: continúa la numeración desde el último evento guardado.
+void iniciarRegistroEventos() {
+  bool hay = false;
+  for (uint8_t i = 0; i < LOG_SLOTS; i++) {
+    EventoLog e;
+    EEPROM.get(LOG_BASE + i * sizeof(EventoLog), e);
+    if (e.secuencia == 0xFFFF) continue;
+    if (!hay || (int16_t)(e.secuencia - secuenciaLog) > 0) {
+      secuenciaLog = e.secuencia;
+      slotLog      = i;
+      hay          = true;
+    }
+  }
+  if (!hay) slotLog = LOG_SLOTS - 1;   // El primer evento irá a la posición 0
+}
+
+#ifdef MODO_DEPURACION
+// Una línea CSV por evento: "EV,..." en vivo o "LOG,..." al descargar el registro.
+void imprimirEvento(const EventoLog &e, bool enVivo) {
+  Serial.print(enVivo ? F("EV,") : F("LOG,"));
+  Serial.print(e.secuencia); Serial.print(',');
+  Serial.print(e.t_s);       Serial.print(',');
+  Serial.print(e.estado);    Serial.print(',');
+  Serial.print(e.motivo);    Serial.print(',');
+  Serial.print(e.p_x10 / 10.0, 1); Serial.print(',');
+  Serial.println(e.intentos);
+}
+
+// 'D': envía el registro completo, del evento más antiguo al más reciente.
+void descargarRegistro() {
+  Serial.println(F("LOG_INICIO,secuencia,t_s,estado,motivo,p2,intentos"));
+  for (uint8_t k = 1; k <= LOG_SLOTS; k++) {
+    uint8_t i = (slotLog + k) % LOG_SLOTS;
+    EventoLog e;
+    EEPROM.get(LOG_BASE + i * sizeof(EventoLog), e);
+    wdt_reset();
+    if (e.secuencia == 0xFFFF) continue;
+    imprimirEvento(e, false);
+  }
+  Serial.println(F("LOG_FIN"));
+}
+
+// 'B': borra el registro (deja todas las posiciones vacías).
+void borrarRegistro() {
+  EventoLog vacio;
+  memset(&vacio, 0xFF, sizeof(vacio));
+  for (uint8_t i = 0; i < LOG_SLOTS; i++) {
+    EEPROM.put(LOG_BASE + i * sizeof(EventoLog), vacio);
+    wdt_reset();
+  }
+  secuenciaLog = 0;
+  slotLog      = LOG_SLOTS - 1;
+  Serial.println(F("LOG_BORRADO"));
+}
+#endif
+
+void registrarEvento(uint8_t mot, float p) {
+  EventoLog e;
+  e.t_s = millis() / 1000UL;
+  secuenciaLog++;
+  if (secuenciaLog == 0xFFFF) secuenciaLog = 0;   // 0xFFFF queda reservado para "vacío"
+  e.secuencia = secuenciaLog;
+  e.p_x10     = (int16_t)(p * 10.0 + (p >= 0 ? 0.5 : -0.5));
+  e.estado    = (uint8_t)estado;
+  e.motivo    = mot;
+  e.intentos  = intentosFallidos;
+  slotLog = (slotLog + 1) % LOG_SLOTS;
+  EEPROM.put(LOG_BASE + slotLog * sizeof(EventoLog), e);
+#ifdef MODO_DEPURACION
+  imprimirEvento(e, true);
+#endif
 }
 
 // ================= FUNCIONES DE HARDWARE Y LECTURA =================
@@ -338,13 +469,13 @@ unsigned long obtenerIntervaloVerificacionAdaptativo() {
 void iniciarSondeoCalle(unsigned long ahora, float presionActual) {
   // Captura la presión retenida en el pulmón (aguas abajo del Check #1) ANTES de energizar B1
   presionBaseArranque = presionActual;
+  modoBombeo          = MODO_SUBIENDO;
   pMeseta             = -1.0;           // Cada arranque parte sin meseta conocida
   pVentanaPendiente   = presionActual;
   t_ventanaPendiente  = ahora;
   subidaCebado        = false;
   t_inicioEstado      = ahora;
   t_condicion         = ahora;
-  t_corteAlta         = ahora;
   estado              = SONDEO_CALLE;
 }
 
@@ -424,6 +555,7 @@ bool calLeer(float &p) {
 
 void calFin() {
   apagarBomba();
+  motivo      = M_CALIBRACION;
   calPLimite  = CAL_P_ABORT;
   t_condicion = millis();
   estado      = REPOSO_PRESURIZADO;
@@ -619,6 +751,19 @@ void procesarComandoCal(char c) {
 }
 #endif
 
+#if defined(MODO_CALIBRACION) || defined(MODO_DEPURACION)
+// Comandos por el puerto serie: D y B (depuración) y los de calibración.
+void procesarComando(char c) {
+#ifdef MODO_DEPURACION
+  if (c == 'D' || c == 'd') { descargarRegistro(); return; }
+  if (c == 'B' || c == 'b') { borrarRegistro(); return; }
+#endif
+#ifdef MODO_CALIBRACION
+  procesarComandoCal(c);
+#endif
+}
+#endif
+
 void setup() {
   // 1. Apagado inmediato en frío antes de habilitar salida
   digitalWrite(PIN_TRIAC_MOC, HIGH);
@@ -628,7 +773,7 @@ void setup() {
   // Configurar explícitamente AVCC como referencia ratiométrica del ADC
   analogReference(DEFAULT);
 
-#ifdef MODO_CALIBRACION
+#if defined(MODO_CALIBRACION) || defined(MODO_DEPURACION)
   Serial.begin(9600);
 #endif
 
@@ -640,7 +785,6 @@ void setup() {
   unsigned long ahora = millis();
   t_inicioEstado       = ahora;
   t_condicion          = ahora;
-  t_corteAlta          = ahora;
   t_ultimaVerificacion = ahora;
   t_fallaSensor        = ahora;
 
@@ -659,7 +803,12 @@ void setup() {
     }
   }
 
-  // 5. Habilitar Watchdog a 2 segundos
+  // 5. Registro de eventos: continúa la numeración y anota el encendido
+  iniciarRegistroEventos();
+  estadoRegistrado = estado;
+  registrarEvento(M_ENCENDIDO, presionFiltrada);
+
+  // 6. Habilitar Watchdog a 2 segundos
   wdt_enable(WDTO_2S);
 }
 
@@ -677,15 +826,32 @@ void loop() {
     Serial.print(F(" | Estado:"));
     Serial.print((int)estado);
     Serial.print(F(" | Modo:"));
-    Serial.print(modoHidroneumatico ? F("HIDRONEUMATICO") : F("LLENANDO"));
+    Serial.print(modoBombeo == MODO_LLENANDO ? F("LLENANDO")
+                 : modoBombeo == MODO_HIDRONEUMATICO ? F("HIDRONEUMATICO") : F("SUBIENDO"));
     Serial.print(F(" | Meseta:"));
     Serial.print(pMeseta, 1);
     Serial.print(F(" | Estanc:"));
     Serial.println(pEstancamiento, 1);
   }
+#endif
+#ifdef MODO_DEPURACION
+  // Telemetría: una línea por segundo (tiempo, estado, P2, bomba, modo, meseta, intentos)
+  if (ahora - t_telemetria >= 1000UL) {
+    t_telemetria = ahora;
+    Serial.print(F("TL,"));
+    Serial.print(ahora / 1000UL);         Serial.print(',');
+    Serial.print((int)estado);            Serial.print(',');
+    Serial.print(P2, 2);                  Serial.print(',');
+    Serial.print(bombaEncendida ? 1 : 0); Serial.print(',');
+    Serial.print(modoBombeo);             Serial.print(',');
+    Serial.print(pMeseta, 1);             Serial.print(',');
+    Serial.println(intentosFallidos);
+  }
+#endif
+#if defined(MODO_CALIBRACION) || defined(MODO_DEPURACION)
   if (Serial.available()) {
     char c = Serial.read();
-    procesarComandoCal(c);
+    procesarComando(c);
   }
 #endif
 
@@ -694,6 +860,7 @@ void loop() {
     if (ahora - t_fallaSensor >= 1500UL && estado != FALLA_SENSOR) {
       apagarBomba();
       t_inicioEstado = ahora;
+      motivo = M_FALLA_SENSOR;
       estado = FALLA_SENSOR;
     }
   } else {
@@ -715,6 +882,7 @@ void loop() {
 
       if (P2 <= P_ARRANQUE && ventanaArranqueLista) {
         if (ahora - t_condicion >= T_DEMANDA) {
+          motivo = M_DEMANDA;
           iniciarSondeoCalle(ahora, P2);
         }
       } else {
@@ -740,17 +908,14 @@ void loop() {
         umbralCebadoDinamico = PISO_FLUJO_TOTAL;   // Nunca exigir más que el piso de flujo parcial
       }
 
-      // 1. Verificar si cargó directo el pulmón a 20 PSI (tanque lleno y sin consumo en casa)
+      // 1. Si cargó directo el pulmón a 20 PSI (tanque lleno y sin consumo en casa): corta al instante
       if (P2 >= P_MAX_OFF) {
-        if (ahora - t_corteAlta >= T_CORTE_20PSI) {
-          apagarBomba();
-          intentosFallidos = 0;
-          t_condicion      = ahora;
-          estado           = REPOSO_PRESURIZADO;
-          break;
-        }
-      } else {
-        t_corteAlta = ahora;
+        apagarBomba();
+        motivo           = M_CORTE_20;
+        intentosFallidos = 0;
+        t_condicion      = ahora;
+        estado           = REPOSO_PRESURIZADO;
+        break;
       }
 
       // 2. Cebado confirmado = P2 subió de forma sostenida (pendiente >= PENDIENTE_MIN_SUBIDA en alguna
@@ -771,12 +936,12 @@ void loop() {
           verificacionesExitosas = 0; // Inicia el intervalo adaptativo en 90s
           pRefVerificacion       = P2;
           t_inicioEstado         = ahora;
-          t_corteAlta            = ahora;
           t_ultimaVerificacion   = ahora;
           t_sinFlujo             = ahora;
           flujoSobreUmbral       = false;
           t_estancamiento        = ahora;
           pMaxEstanc             = P2;
+          motivo                 = M_FLUJO_CONFIRMADO;
           estado                 = BOMBEO_ACTIVO;
           break;
         }
@@ -790,6 +955,7 @@ void loop() {
 
       if (sinIncrementoDeCebado || tiempoAbsolutoExcedido) {
         apagarBomba();
+        motivo = M_SIN_SUBIDA;
         if (intentosFallidos < 10) intentosFallidos++;
         t_inicioEstado = ahora;
         estado         = ESPERA_SIN_FLUJO;
@@ -804,17 +970,17 @@ void loop() {
       encenderBomba(ahora);
       digitalWrite(PIN_LED_ESTADO, HIGH);
 
-      // --- A. Temporizador dedicado de Corte por Pulmón Cargado (>= 20.0 PSI por 2.0s) ---
+      // --- A. Corte por pulmón cargado: apaga al instante en que P2 llega a P_MAX_OFF ---
+      //     Sin espera de confirmación: con 2 s de espera la bomba seguía empujando contra el flotador
+      //     cerrado y la presión pasaba de 20 PSI (sobrepico). El ruido ya lo filtran el promedio de 64
+      //     lecturas y el filtro EMA del sensor.
       if (P2 >= P_MAX_OFF) {
-        if (ahora - t_corteAlta >= T_CORTE_20PSI) {
-          apagarBomba();
-          intentosFallidos = 0;
-          t_condicion      = ahora;
-          estado           = REPOSO_PRESURIZADO;
-          break;
-        }
-      } else {
-        t_corteAlta = ahora;
+        apagarBomba();
+        motivo           = M_CORTE_20;
+        intentosFallidos = 0;
+        t_condicion      = ahora;
+        estado           = REPOSO_PRESURIZADO;
+        break;
       }
 
       // --- B. SIN FLUJO (incluye bomba en vacío, calle seca o pérdida de cebado) ---
@@ -829,6 +995,7 @@ void loop() {
       if (P2 <= P_UMBRAL_FLUJO) {
         if (ahora - t_sinFlujo >= plazoSinFlujo) {
           apagarBomba();
+          motivo = M_SIN_FLUJO_NIVEL;
           if (intentosFallidos < 10) intentosFallidos++;
           t_inicioEstado = ahora;
           estado         = ESPERA_SIN_FLUJO;
@@ -844,11 +1011,16 @@ void loop() {
         t_estancamiento = ahora;
       }
       bool nivelNuevo    = (pMeseta < 0.0) || (P2 > pMeseta + MARGEN_NUEVO_NIVEL);
-      modoHidroneumatico = (pMeseta >= 0.0) && (P2 > pMeseta + MARGEN_NUEVO_NIVEL);
+      if (pMeseta < 0.0) {
+        modoBombeo = MODO_SUBIENDO;
+      } else {
+        modoBombeo = (P2 > pMeseta + MARGEN_NUEVO_NIVEL) ? MODO_HIDRONEUMATICO : MODO_LLENANDO;
+      }
       if (ahora - t_estancamiento >= T_ESTANCAMIENTO) {
         if (P2 >= P_LLENO_ESTANCADO) {
           // Estancada entre 18 y 20 PSI: tanque lleno (sin micro-pausa)
           apagarBomba();
+          motivo           = M_LLENO_ESTANCADO;
           intentosFallidos = 0;
           t_condicion      = ahora;
           estado           = REPOSO_PRESURIZADO;
@@ -856,6 +1028,7 @@ void loop() {
         }
         if (nivelNuevo) {
           // Aceleración 0 en un nivel nuevo: ¿sigue llenando, terminó de llenar o la bomba no da más?
+          motivo                 = M_PRUEBA_NIVEL_NUEVO;
           pInicioPausa      = P2;
           flujoConfirmadoEnPausa = false;
           apagarBomba();
@@ -870,7 +1043,7 @@ void loop() {
       // --- C. Verificación Hidrodinámica Adaptativa (90s -> 180s -> 300s): SOLO DURANTE EL LLENADO ---
       //     (criterio del usuario). Llenando = meseta confirmada y P2 en ella. Fuera del llenado
       //     (subida inicial o hidroneumático) el intervalo no corre: lo cubren el estancamiento y el corte.
-      bool enLlenado = (pMeseta >= 0.0) && !modoHidroneumatico;
+      bool enLlenado = (modoBombeo == MODO_LLENANDO);
       if (!enLlenado) {
         t_ultimaVerificacion = ahora;
         pRefVerificacion     = P2;
@@ -886,6 +1059,7 @@ void loop() {
         // hace la micro-pausa: si estaba llenando el tanque caerá <= P_ARRANQUE (9.5 PSI) o caerá >= 0.8 PSI;
         // si estaba atrapada por el Check #1 sin agua en la calle, quedará fija y cortará en 3 segundos.
         else {
+          motivo                 = M_PAUSA_PERIODICA;
           pInicioPausa      = P2;
           flujoConfirmadoEnPausa = false;
           apagarBomba();
@@ -899,6 +1073,7 @@ void loop() {
       //     Apaga y espera 20 min (nivel de intentos >= 3) antes de volver a verificar flujo.
       if (ahora - t_inicioEstado >= T_MAX_BOMBEO) {
         apagarBomba();
+        motivo = M_TIEMPO_MAXIMO;
         if (intentosFallidos < 3) intentosFallidos = 3;
         t_inicioEstado = ahora;
         estado         = ESPERA_SIN_FLUJO;
@@ -919,6 +1094,7 @@ void loop() {
 
       // 2. Si durante la pausa la presión alcanza el corte de 20 PSI, el tanque ya se llenó
       if (P2 >= P_MAX_OFF) {
+        motivo           = M_CORTE_20;
         intentosFallidos = 0;
         t_condicion      = ahora;
         estado           = REPOSO_PRESURIZADO;
@@ -945,15 +1121,15 @@ void loop() {
       if (flujoConfirmadoEnPausa && (tiempoEnPausa >= T_MIN_PAUSA_EFECTIVA)) {
         // P2 cayó: el agua sigue yendo al tanque. Ese nivel es la meseta de llenado confirmada.
         pMeseta            = pInicioPausa;
-        modoHidroneumatico = false;
+        modoBombeo         = MODO_LLENANDO;
         if (verificacionesExitosas < 10) verificacionesExitosas++;
         pRefVerificacion     = P2;
         t_ultimaVerificacion = ahora;
-        t_corteAlta          = ahora;
         t_sinFlujo           = ahora;
         flujoSobreUmbral     = false;
         t_estancamiento      = ahora;
         pMaxEstanc           = P2;
+        motivo               = M_PAUSA_CON_CAIDA;
         encenderBomba(ahora); // Reanuda el bombeo
         estado               = BOMBEO_ACTIVO;
         break;
@@ -966,12 +1142,14 @@ void loop() {
       if (tiempoEnPausa >= T_PAUSA_VERIFICACION) {
         if (P2 >= PISO_FLUJO_TOTAL) {
           pEstancamiento   = P2;
+          motivo           = M_ESTANCAMIENTO;
           intentosFallidos = 0;
           t_condicion      = ahora;
           estado           = REPOSO_PRESURIZADO;
         } else {
           if (intentosFallidos < 10) intentosFallidos++;
           t_inicioEstado = ahora;
+          motivo         = M_SIN_FLUJO_PAUSA;
           estado         = ESPERA_SIN_FLUJO;
         }
       }
@@ -1001,9 +1179,11 @@ void loop() {
         if (P2 > P_ARRANQUE) {
           // Aún hay presión en el pulmón: REPOSO arrancará al bajar a P_ARRANQUE. Los intentos se
           // conservan; si la siguiente verificación falla, la escalada de esperas continúa.
+          motivo           = M_FIN_ESPERA_REPOSO;
           t_condicion      = ahora;
           estado           = REPOSO_PRESURIZADO;
         } else {
+          motivo = M_REINTENTO;
           iniciarSondeoCalle(ahora, P2);
         }
       }
@@ -1023,6 +1203,7 @@ void loop() {
       if (sensorValido) {
         if (ahora - t_inicioEstado >= 3000UL) {
           t_condicion = ahora;
+          motivo      = M_SENSOR_RECUPERADO;
           if (intentosFallidos > 0) {
             t_inicioEstado = ahora;
             estado         = ESPERA_SIN_FLUJO;
@@ -1035,6 +1216,20 @@ void loop() {
       }
       break;
     }
+  }
+
+  // Un ciclo que termina arriba (corte a 20 PSI, lleno por estancamiento o presión de estancamiento)
+  // terminó en hidroneumático, aunque nunca se haya confirmado una meseta de llenado.
+  if (estado == REPOSO_PRESURIZADO &&
+      (motivo == M_CORTE_20 || motivo == M_LLENO_ESTANCADO || motivo == M_ESTANCAMIENTO)) {
+    modoBombeo = MODO_HIDRONEUMATICO;
+  }
+
+  // Registro de eventos: cada cambio de estado con su motivo (EEPROM; por USB en MODO_DEPURACION)
+  if (estado != estadoRegistrado) {
+    registrarEvento(motivo, P2);
+    estadoRegistrado = estado;
+    motivo           = M_NINGUNO;
   }
 
   // Persistencia: guarda los intentos fallidos si cambiaron (sobrevive a cortes de luz)
