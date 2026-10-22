@@ -28,7 +28,7 @@ Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre
 | Check #2 | 5 psi/(L/s)² | Supuesto |
 | Sensor | ruido ADC 1 cuenta por muestra | Supuesto |
 
-## Escenarios y resultado con el firmware actual
+## Escenarios y resultado con el firmware actual (7 de 10 pasan; fallan los tres de falsa alarma por consumo)
 
 | Escenario | Qué prueba | Resultado |
 |---|---|---|
@@ -38,14 +38,14 @@ Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre
 | `limite_45min` | Corte a 45 min y enfriamiento de 20 min | PASA |
 | `base_baja` | Arranque desde la estática del tanque casi vacío | PASA con pulmón ≤ 6 L, **FALLA con ≥ 8 L** |
 | `calle_vuelve` | Reanudación al volver el agua | PASA |
-| `bomba_vacio` | La calle se corta en pleno llenado | **FALLA**: no se detecta; 2.409 s de bomba en vacío hasta el límite de 45 min |
+| `bomba_vacio` | La calle se corta en pleno llenado | PASA tras la corrección (antes: no se detectaba, 2.409 s de bomba en vacío hasta los 45 min; ahora se detecta en la siguiente micro-pausa, 184 s en vacío) |
 | `consumo_normal` | Consumo de la casa al momento de arrancar | **FALLA**: falsa alarma de "calle seca" (espera de 5 min) |
 | `consumo_alto` | Demanda continua 0.4 L/s | **FALLA**: falsas alarmas y esperas de 5/10/20 min mientras el tanque se vacía |
 | `ciclado_corto` | Ráfagas de consumo cada 200 s | **FALLA**: falsas alarmas; el presupuesto de 18 arranques/h se consume casi entero |
 
 ## Hallazgos
 
-1. **Bomba en vacío no detectada** (confirma la revisión de lógica). Al quedar sin agua, P2 cae a ~7.1 psi (columna de la subida), por encima de `P_CAIDA_SECO`, y en la micro-pausa `P2 <= P_ARRANQUE` ya se cumple, así que se confirma flujo falso y se reanuda. Corrección propuesta: exigir que P2 *cruce* los 9.5 psi durante la pausa. Pendiente de aplicar.
+1. **Bomba en vacío no detectada** (confirma la revisión de lógica). Al quedar sin agua, P2 cae a ~7.1 psi (columna de la subida), por encima de `P_CAIDA_SECO`, y en la micro-pausa `P2 <= P_ARRANQUE` ya se cumple, así que se confirma flujo falso y se reanuda. **Corregido**: en `VERIFICANDO_FLUJO` el cruce de `P_ARRANQUE` solo cuenta si P2 estaba por encima al iniciar la pausa (`cruzoArranque`); mismo criterio en el comando `F`. Verificado con el simulador (antes/después) y compilado con PlatformIO.
 2. **El sondeo de 4 s depende del volumen del pulmón.** Debe llevar P2 de la base a `max(base+1.5, 9.5)` en ~3 s. Con un pulmón grande, o con la base en la estática del tanque casi vacío, no lo logra aunque haya agua: con 12 L o más el escenario `normal` nunca llena el tanque (esperas de 5/10/20 min). Hay que conocer el volumen real del pulmón.
 3. **Falsa alarma de "calle seca" con consumo.** Si la casa consume al arrancar, el caudal de la bomba se va a la casa y el sondeo falla; entra a espera 5 min (la casa sigue con agua por el Check #2 a baja presión). Con demanda alta sostenida el tanque puede vaciarse mientras la bomba espera.
 4. **Sobrepresión al cortar.** El corte a 20 psi exige 2 s sostenidos; con 6 L y una bomba de cierre alto el modelo llega a ~27 psi. Depende de la altura de cierre real (comando `S`) y de la tubería.

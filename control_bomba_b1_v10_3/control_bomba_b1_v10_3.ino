@@ -430,13 +430,13 @@ void calCaidaFlujo() {
     unsigned long dt = millis() - t0;
     if (p > pico) pico = p;
     if (!tomado15 && dt >= T_MIN_PAUSA_EFECTIVA) { p15 = p; tomado15 = true; }
-    if (p <= P_ARRANQUE) cruzo = true;
+    if (base > P_ARRANQUE && p <= P_ARRANQUE) cruzo = true;
     delay(20);
   }
   calFin();
   float caida15 = pico - p15;
   float caida30 = pico - p;
-  bool confirma = (caida15 >= CAIDA_MIN_FLUJO_ACTIVO) || (p15 <= P_ARRANQUE);
+  bool confirma = (caida15 >= CAIDA_MIN_FLUJO_ACTIVO) || (base > P_ARRANQUE && p15 <= P_ARRANQUE);
   Serial.print(F("base=")); Serial.print(base, 2);
   Serial.print(F(" pico=")); Serial.print(pico, 2);
   Serial.print(F(" caida a 1.5s=")); Serial.print(caida15, 2);
@@ -780,8 +780,11 @@ void loop() {
       // 3. Evaluar si ocurrió caída de presión que demuestra flujo hacia el tanque o la casa:
       //    - Alta fricción: cae >= 0.80 PSI desde el pico.
       //    - Baja fricción (llenado entre 9.6 y 10.2 PSI): cruza <= P_ARRANQUE (9.5 PSI) rumbo a estática.
+      //    El cruce de P_ARRANQUE solo cuenta si P2 estaba POR ENCIMA al iniciar la pausa: si ya estaba
+      //    en la estática (bomba en vacío, pulmón drenado hacia el tanque) no hay caída que confirme flujo.
       float caidaDesdePico = pPicoDurantePausa - P2;
-      if (caidaDesdePico >= CAIDA_MIN_FLUJO_ACTIVO || P2 <= P_ARRANQUE) {
+      bool cruzoArranque   = (pPicoDurantePausa > P_ARRANQUE) && (P2 <= P_ARRANQUE);
+      if (caidaDesdePico >= CAIDA_MIN_FLUJO_ACTIVO || cruzoArranque) {
         flujoConfirmadoEnPausa = true;
       }
 
