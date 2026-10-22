@@ -12,7 +12,7 @@ Registro de las decisiones y razonamientos de calibración (v10.3). Los valores 
 
 1. Descomentar `#define MODO_CALIBRACION` en el `.ino`, subir con Arduino Community Edition o PlatformIO.
 2. Monitor serie a 9600 bps: imprime cada segundo `P2_PSI | Estado | ArranquesHora`.
-3. Estados: 0 REPOSO, 1 SONDEO, 2 BOMBEO, 3 VERIFICANDO, 4 ESPERA_SIN_AGUA, 5 ENFRIAMIENTO, 6 FALLA_SENSOR.
+3. Estados: 0 REPOSO, 1 SONDEO, 2 BOMBEO, 3 VERIFICANDO, 4 ESPERA_SIN_FLUJO, 5 ENFRIAMIENTO, 6 FALLA_SENSOR.
 4. Al terminar, volver a comentar `MODO_CALIBRACION` y subir la versión de producción.
 5. Aislamiento: no unir GND DC con neutro AC; con PC por USB usar aislamiento o calibrar sin la bomba en red.
 
@@ -42,10 +42,12 @@ Guarda cada medición en `data/calibraciones.csv` (fecha, comando, medición, no
 
 ## Detalle del comando `E` (P_ESTATICA_REAL)
 
-Enviar `E` por serie. No enciende la bomba. Requiere estado REPOSO con bomba apagada. Promedia 10 s y reporta promedio, mín, máx, dispersión, y sugiere `P_CAIDA_SECO` (= prom − 1.2) y precarga (= prom + 0.4). Avisos: dispersión > 0.5 PSI (grifo abierto/consumo) y promedio < 3 PSI.
+Enviar `E` por serie. No enciende la bomba. Requiere estado REPOSO con bomba apagada. Promedia 10 s y reporta promedio, mín, máx, dispersión, y sugiere la precarga (= prom + 0.4); con el tanque lleno el promedio es `P_ESTATICA_MAX`. Avisos: dispersión > 0.5 PSI (grifo abierto/consumo) y promedio < 3 PSI.
 *Compilado; sin probar en placa todavía.*
 
 ## Hallazgos
+
+> Nota: `P_CAIDA_SECO` ya no existe en el firmware (ver *Unificación* al final); lo que sigue sobre ese umbral es el razonamiento histórico.
 
 ### La estática depende del nivel del tanque
 - Lleno ≈ 7.1 PSI; a ~3 dedos del fondo (~5–6 cm, ~0.08 PSI) ≈ **5.0 PSI** *(estimado)*; diferencia ≈ 2.1 PSI.
@@ -87,7 +89,7 @@ Extras: `X` apaga la bomba de inmediato, `?` lista comandos. Seguridad: solo con
 
 ## Pendiente
 - Medir P_ESTATICA_REAL (tanque a ~3 dedos del fondo) y confirmar la estimación de 5.0 PSI / altura del sensor.
-- Aplicar `P_CAIDA_SECO` y precarga calibrados.
+- Medir `P_ESTATICA_MAX` (tanque lleno) y aplicar la precarga calibrada.
 - Probar en la placa los comandos `E L F S C` y el script (compilan, pero no se han ejecutado en hardware).
 - Medir con la calle en su presión más baja (L, S, C) y registrar la presión de calle en `--nota`.
 
@@ -113,3 +115,7 @@ Se agregó [../sim/](../sim/README.md): el firmware real compilado en el PC cont
 ## Detección por subida sostenida de presión (implementada)
 
 Criterio del usuario: sin agua la bomba no puede acelerar la presión; una P2 plana, aunque esté por encima de la estática (pulmón retenido por el Check #1), no es flujo. En el firmware: `SONDEO_CALLE` exige pendiente ≥ 0.3 psi/s en una ventana de 1 s y P2 ≥ `max(base + 1.5, P_ESTATICA_MAX + 1.0)` sostenida 1 s; `BOMBEO_ACTIVO` declara sin flujo si P2 ≤ `P_ESTATICA_MAX + 0.5` durante 10 s. **Calibrar**: `P_ESTATICA_MAX` (hoy 7.1, supuesto) con `E` con el tanque lleno; la pendiente mínima y δ con las mediciones reales. Resultados del simulador en [../sim/README.md](../sim/README.md). Compila: producción 5.208 B flash (17,0 %) / 84 B SRAM; calibración 12.666 B (41,2 %) / 289 B.
+
+## Unificación: "bomba en vacío" = "sin flujo"
+
+Decisión del usuario: los dos escenarios son el mismo estado y el segundo detector era código redundante. Se eliminaron `P_CAIDA_SECO`, `T_CAVITACION_RAPIDA` y `t_caidaSeco`; el único criterio es `P2 <= P_SIN_FLUJO` (= `P_ESTATICA_MAX` + 0.5 PSI) durante `T_SIN_FLUJO` (10 s) con B1 encendida → `ESPERA_SIN_FLUJO` (antes `ESPERA_SIN_AGUA`). Cambio de comportamiento: un colapso total de presión ahora se declara a los 10 s y no a los 3 s. El comando `E` ya no sugiere `P_CAIDA_SECO`.

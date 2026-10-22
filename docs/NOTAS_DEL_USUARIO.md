@@ -46,6 +46,8 @@ Archivo vivo: se agrega aquí lo que el usuario va indicando (hechos de la insta
 16. Pidió registrar todo lo que dice en un archivo aparte (este archivo).
 17. Pidió proceder con lo demás → se implementó la detección por subida sostenida y se probó en el simulador.
 
+18. Pidió **descartar "bomba en vacío" y "sin flujo" como casos separados**: son lo mismo y el código duplicado es redundante → un único estado/criterio "sin flujo" (se eliminó `P_CAIDA_SECO`; estado `ESPERA_SIN_FLUJO`).
+
 ## 4. Pendientes por decidir / datos que faltan
 
 - Volumen real del pulmón, presión real de la calle, altura de cierre y caudal de la bomba (curva H‑Q).

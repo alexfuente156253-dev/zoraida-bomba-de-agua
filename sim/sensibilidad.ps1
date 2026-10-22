@@ -3,7 +3,7 @@
 param(
   [string]$Parametro = "v-pulmon",
   [double[]]$Valores = @(4, 6, 8, 12, 20),
-  [string[]]$Escenarios = @("normal", "base_baja", "bomba_vacio")
+  [string[]]$Escenarios = @("normal", "base_baja", "sin_flujo")
 )
 $exe = "$PSScriptRoot\build\sim.exe"
 foreach ($e in $Escenarios) {

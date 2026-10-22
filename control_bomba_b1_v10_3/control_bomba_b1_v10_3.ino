@@ -26,14 +26,14 @@
  *
  * GARANTÍA DE SUMINISTRO CONTINUO A LA VIVIENDA:
  *   - Durante cualquier pausa del motor (`PAUSA_ENFRIAMIENTO_MOTOR` de 20 min por tiempo máximo
- *     o por alcanzar el límite de 18 arranques/hora, o durante `ESPERA_SIN_AGUA`), la vivienda
+ *     o por alcanzar el límite de 18 arranques/hora, o durante `ESPERA_SIN_FLUJO`), la vivienda
  *     NO se queda sin agua: al abrir un grifo y bajar la presión de la línea a ~7.1 PSI, la
  *     válvula `CHECK #2` se abre automáticamente por gravedad y abastece la casa desde el tanque.
  *
  * TABLA DE 5 MEDICIONES EN CAMPO (SIN AGREGAR HARDWARE):
  *   1. P_ESTATICA_REAL: Bomba apagada, grifo abierto 15s y cerrado. Leer presión sostenida por
- *      el tanque (~7.1 PSI). Ajustar `P_CAIDA_SECO` = P_ESTATICA_REAL - 1.2 PSI (Actual: 6.0 PSI)
- *      y precargar el aire del pulmón (sin agua) a P_ESTATICA_REAL + 0.4 PSI (~7.5 PSI).
+ *      el tanque (~7.1 PSI lleno). Con el tanque LLENO el promedio es `P_ESTATICA_MAX`; con el tanque
+ *      casi vacío se obtiene el mínimo y se precarga el aire del pulmón (sin agua) a mín + 0.4 PSI.
  *   2. P_LLENADO_REAL: Flotador del tanque abierto y grifos de casa cerrados. Encender B1 y leer
  *      presión estable. Ajustar `P_ARRANQUE` >= 1.0 PSI por debajo de P_LLENADO_REAL y ajustar
  *      `P_TECHO_CEBADO_DINAMICO` = P_LLENADO_REAL - 0.3 PSI.
@@ -86,10 +86,9 @@ const float ADC_MAX_SENSOR_VALIDO = 982.0; // > 96.0% de AVCC indica cortocircui
 
 // ================= UMBRALES DE PRESIÓN CON SEPARACIÓN >= 1.5 PSI =================
 // NOTA DE CALIBRACIÓN (tanque cilíndrico de ~1.5 m): la estática varía ~2.1 PSI entre lleno (~7.1) y
-// casi vacío a ~3 dedos del fondo (~5.0 PSI estimado). P_CAIDA_SECO y la precarga del pulmón se calculan
-// con la estática MÍNIMA medida (P_ESTATICA_REAL = tanque casi vacío): P_CAIDA_SECO = mín - 1.2 (~3.8 PSI
-// estimado; 6.0 es el valor inicial sin calibrar). Ver docs/CALIBRACION.md.
-const float P_CAIDA_SECO            = 6.0;  // Descebado con tanque vacío / pérdida total (< estática)
+// casi vacío a ~3 dedos del fondo (~5.0 PSI estimado). La precarga del pulmón se calcula con la estática
+// MÍNIMA medida (tanque casi vacío) + 0.4 PSI. "Bomba en vacío" y "sin flujo" son el mismo estado: se
+// detecta con P_SIN_FLUJO (ver abajo). Ver docs/CALIBRACION.md.
 const float P_ARRANQUE              = 9.5;  // Cut-in: arranca cuando el pulmón baja a <= 9.5 PSI (+3.5 PSI)
 const float P_TECHO_CEBADO_DINAMICO = 11.0; // Máximo exigible en SONDEO_CALLE (+1.5 PSI sobre P_ARRANQUE)
 const float P_CASI_LLENO_PAUSA      = 18.5; // Si en la micro-pausa queda estanca >= 18.5 PSI, el tanque ya cerró
@@ -117,7 +116,6 @@ const float CAIDA_MIN_FLUJO_ACTIVO  = 0.80; // Caída mínima desde el pico dura
 const unsigned long T_PRUEBA_CEBADO      = 4000UL;   // 4.0 seg máx en SONDEO_CALLE (Check #0 mantiene B1 cebada)
 const unsigned long T_MAX_SONDEO_ABS     = 6500UL;   // 6.5 seg techo absoluto en SONDEO_CALLE ante oscilaciones
 const unsigned long T_CONFIRMA_CEBADO    = 1000UL;   // 1.0 seg sosteniendo el Delta P confirma flujo hacia pulmón
-const unsigned long T_CAVITACION_RAPIDA  = 3000UL;   // 3.0 seg exactos bajo P_CAIDA_SECO (6.0 PSI)
 const unsigned long T_CORTE_20PSI        = 2000UL;   // 2.0 seg sosteniendo >= 20 PSI (carga completa del pulmón)
 const unsigned long T_DEMANDA            = 1200UL;   // 1.2 seg bajo 9.5 PSI para confirmar descarga del pulmón
 
@@ -150,7 +148,7 @@ enum EstadoSistema {
   SONDEO_CALLE,             // Prueba rápida de 4s evaluando Delta P (+1.5 PSI)
   BOMBEO_ACTIVO,            // Llenando tanque o cargando pulmón hasta 20 PSI
   VERIFICANDO_FLUJO,        // Micro-pausa activa (1.5s a 3.0s) cuando P2 está en meseta sin subir
-  ESPERA_SIN_AGUA,          // Calle seca: espera escalonada 5/10/20 min (casa con agua por Check #2)
+  ESPERA_SIN_FLUJO,          // Sin flujo (calle seca o bomba sin agua): espera escalonada 5/10/20 min (casa con agua por Check #2)
   PAUSA_ENFRIAMIENTO_MOTOR, // Descanso de 20 min tras 45 min o 18 arranques/h (casa con agua por Check #2)
   FALLA_SENSOR              // Sensor desconectado (<45 cuentas) o en corto (>982 cuentas)
 };
@@ -161,7 +159,6 @@ EstadoSistema estado = REPOSO_PRESURIZADO;
 unsigned long t_inicioEstado        = 0;
 unsigned long t_condicion           = 0;
 unsigned long t_corteAlta           = 0;
-unsigned long t_caidaSeco           = 0;
 unsigned long t_ultimaVerificacion  = 0;
 unsigned long t_inicioPausaVerif    = 0;
 unsigned long t_ultimoArranque      = 0;
@@ -297,12 +294,11 @@ void calibrarEstatica() {
   Serial.print(F(" dispersion:")); Serial.println(pMax - pMin, 2);
   if (pMax - pMin > 0.5) Serial.println(F("AVISO: lectura inestable (grifo abierto o consumo?)"));
   if (prom < 3.0) Serial.println(F("AVISO: estatica < 3 PSI, nivel demasiado bajo o sensor/altura incorrectos"));
-  Serial.print(F("Sugerido P_CAIDA_SECO = ")); Serial.println(prom - 1.2, 2);
+  Serial.println(F("Tanque LLENO: usar este promedio como P_ESTATICA_MAX"));
   Serial.print(F("Sugerida precarga pulmon = ")); Serial.println(prom + 0.4, 2);
   Serial.print(F("RES,E,prom=")); Serial.print(prom, 2);
   Serial.print(F(",min=")); Serial.print(pMin, 2);
   Serial.print(F(",max=")); Serial.print(pMax, 2);
-  Serial.print(F(",caida_seco=")); Serial.print(prom - 1.2, 2);
   Serial.print(F(",precarga=")); Serial.println(prom + 0.4, 2);
 }
 
@@ -561,7 +557,6 @@ void setup() {
   t_inicioEstado       = ahora;
   t_condicion          = ahora;
   t_corteAlta          = ahora;
-  t_caidaSeco          = ahora;
   t_ultimaVerificacion = ahora;
   t_inicioVentanaHora  = ahora;
   t_fallaSensor        = ahora;
@@ -692,7 +687,6 @@ void loop() {
           pRefVerificacion       = P2;
           t_inicioEstado         = ahora;
           t_corteAlta            = ahora;
-          t_caidaSeco            = ahora;
           t_ultimaVerificacion   = ahora;
           t_sinFlujo             = ahora;
           estado                 = BOMBEO_ACTIVO;
@@ -710,7 +704,7 @@ void loop() {
         apagarBomba();
         if (intentosFallidos < 10) intentosFallidos++;
         t_inicioEstado = ahora;
-        estado         = ESPERA_SIN_AGUA;
+        estado         = ESPERA_SIN_FLUJO;
       }
       break;
     }
@@ -735,28 +729,16 @@ void loop() {
         t_corteAlta = ahora;
       }
 
-      // --- B. Temporizador dedicado de Caída Crítica (< 6.0 PSI por 3.0s) ---
-      if (P2 < P_CAIDA_SECO) {
-        if (ahora - t_caidaSeco >= T_CAVITACION_RAPIDA) {
-          apagarBomba();
-          if (intentosFallidos < 10) intentosFallidos++;
-          t_inicioEstado = ahora;
-          estado         = ESPERA_SIN_AGUA;
-          break;
-        }
-      } else {
-        t_caidaSeco = ahora;
-      }
-
-      // --- B2. Sin flujo: con B1 encendida, P2 en la estática de la columna (o por debajo) durante 10 s ---
+      // --- B. SIN FLUJO (incluye bomba en vacío, calle seca o pérdida de cebado) ---
+      //     Con B1 encendida, P2 en la estática de la columna (o por debajo) durante 10 s.
       //     Con agua, P2 queda sobre la estática por la fricción del llenado; sin agua el pulmón se drena
-      //     hacia el tanque y P2 cae a la estática. Detecta la bomba en vacío en segundos.
+      //     hacia el tanque y P2 cae a la estática. Un único criterio para todos los casos.
       if (P2 <= P_SIN_FLUJO) {
         if (ahora - t_sinFlujo >= T_SIN_FLUJO) {
           apagarBomba();
           if (intentosFallidos < 10) intentosFallidos++;
           t_inicioEstado = ahora;
-          estado         = ESPERA_SIN_AGUA;
+          estado         = ESPERA_SIN_FLUJO;
           break;
         }
       } else {
@@ -828,7 +810,7 @@ void loop() {
       //    - Alta fricción: cae >= 0.80 PSI desde el pico.
       //    - Baja fricción (llenado entre 9.6 y 10.2 PSI): cruza <= P_ARRANQUE (9.5 PSI) rumbo a estática.
       //    El cruce de P_ARRANQUE solo cuenta si P2 estaba POR ENCIMA al iniciar la pausa: si ya estaba
-      //    en la estática (bomba en vacío, pulmón drenado hacia el tanque) no hay caída que confirme flujo.
+      //    en la estática (sin flujo, pulmón drenado hacia el tanque) no hay caída que confirme flujo.
       float caidaDesdePico = pPicoDurantePausa - P2;
       bool cruzoArranque   = (pPicoDurantePausa > P_ARRANQUE) && (P2 <= P_ARRANQUE);
       if (caidaDesdePico >= CAIDA_MIN_FLUJO_ACTIVO || cruzoArranque) {
@@ -842,7 +824,6 @@ void loop() {
         pRefVerificacion     = P2;
         t_ultimaVerificacion = ahora;
         t_corteAlta          = ahora;
-        t_caidaSeco          = ahora;
         t_sinFlujo           = ahora;
         encenderBomba(ahora); // Contabiliza el re-arranque en arranquesEnLaHora
         estado               = BOMBEO_ACTIVO;
@@ -858,7 +839,7 @@ void loop() {
         } else {
           if (intentosFallidos < 10) intentosFallidos++;
           t_inicioEstado = ahora;
-          estado         = ESPERA_SIN_AGUA;
+          estado         = ESPERA_SIN_FLUJO;
         }
       }
       break;
@@ -870,7 +851,7 @@ void loop() {
     // permanece en >=3 (esperas de 20 min) durante cortes largos de red pública hasta
     // que un ciclo confirme flujo de agua real o la presión supere P_ARRANQUE.
     // ------------------------------------------------------------------
-    case ESPERA_SIN_AGUA: {
+    case ESPERA_SIN_FLUJO: {
       apagarBomba();
       // Parpadeo rápido (2 Hz) indicando falta de agua en la calle
       digitalWrite(PIN_LED_ESTADO, (ahora / 250UL) % 2);

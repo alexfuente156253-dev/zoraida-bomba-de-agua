@@ -108,7 +108,7 @@ struct Hyd {
 
 // ---------------------------------------------------------------- escenarios y resultados
 static const char* NOMBRE_ESTADO[] = {"REPOSO", "SONDEO", "BOMBEO", "VERIFICANDO",
-                                      "ESPERA_SIN_AGUA", "ENFRIAMIENTO", "FALLA_SENSOR"};
+                                      "ESPERA_SIN_FLUJO", "ENFRIAMIENTO", "FALLA_SENSOR"};
 enum { S_REPOSO, S_SONDEO, S_BOMBEO, S_VERIF, S_ESPERA, S_ENFRIA, S_FALLA };
 
 struct Ev { double t; int from, to; double P, h, dry; int intentos, arr; };
@@ -177,7 +177,7 @@ static std::vector<Scn> escenarios() {
                3600, 0.75, 7.10, siempre, nada, sinFalla});
   v.push_back({"calle_seca", "Calle seca desde el inicio: escalada de esperas 5/10/20 min (3 h)",
                10800, 0.75, 7.10, [](double) { return false; }, nada, sinFalla});
-  v.push_back({"bomba_vacio", "La calle se corta a los 300 s en pleno llenado: bomba en vacio (50 min)",
+  v.push_back({"sin_flujo", "La calle se corta a los 300 s en pleno llenado: la bomba queda sin flujo (50 min)",
                3000, 0.40, 7.10, [](double t) { return t < 300.0; }, nada, sinFalla});
   v.push_back({"consumo_normal", "Tanque lleno, pulmon a 20 psi, la casa consume 0.25 L/s entre 60 y 300 s",
                900, 1.5, 20.0, siempre, [](double t) { return (t >= 60 && t < 300) ? 0.25 : 0.0; }, sinFalla});
@@ -222,14 +222,14 @@ static void evaluar(const std::string& n, const Res& r) {
     for (size_t i : idxTo(r, S_SONDEO)) mx = std::max(mx, durAfter(r, i));
     check(mx <= 7.0, "sondeo mas largo %.1f s (<=7)", mx);
     check(r.minP >= 4.5, "la casa conserva presion por gravedad (minimo %.1f psi)", r.minP);
-  } else if (n == "bomba_vacio") {
+  } else if (n == "sin_flujo") {
     const double tFail = 300.0;
     double tDet = -1, dryDet = -1;
     for (size_t i : esp) if (r.ev[i].t > tFail) { tDet = r.ev[i].t; dryDet = r.ev[i].dry; break; }
-    if (tDet < 0) info("la bomba en vacio NO fue detectada en %.0f s", r.end - tFail);
-    else info("deteccion %.0f s despues del corte; bomba en vacio hasta entonces: %.0f s", tDet - tFail, dryDet);
+    if (tDet < 0) info("la falta de flujo NO fue detectada en %.0f s", r.end - tFail);
+    else info("deteccion %.0f s despues del corte; bomba sin flujo hasta entonces: %.0f s", tDet - tFail, dryDet);
     check(tDet > 0 && (tDet - tFail) <= 600.0, "detectada en <= 600 s tras el corte");
-    check(dryDet >= 0 && dryDet <= 600.0, "bomba en vacio acumulada <= 600 s antes de detectar");
+    check(dryDet >= 0 && dryDet <= 600.0, "bomba sin flujo acumulada <= 600 s antes de detectar");
   } else if (n == "consumo_normal") {
     check(!idxTo(r, S_SONDEO).empty(), "la bomba arranca por baja presion (sondeos: %zu)", idxTo(r, S_SONDEO).size());
     check(esp.empty() && idxTo(r, S_ENFRIA).empty() && idxTo(r, S_FALLA).empty(), "sin esperas, enfriamientos ni fallas espurias");
@@ -365,7 +365,7 @@ int main(int argc, char** argv) {
   r.final_state = (int)estado; r.final_h = hyd.h; r.final_P = hyd.P;
   r.final_int = (int)intentosFallidos; r.final_arr = (int)arranquesEnLaHora;
 
-  printf("\nResumen: bomba encendida %.0f s (%.0f s en vacio), P max %.1f psi, P min %.1f psi, h final %.2f m\n",
+  printf("\nResumen: bomba encendida %.0f s (%.0f s sin flujo), P max %.1f psi, P min %.1f psi, h final %.2f m\n",
          r.pump_on_s, r.dry_s, r.maxP, r.minP, r.final_h);
   evaluar(S->name, r);
   printf("\nRESULTADO %s: %s\n", S->name, g_ok ? "PASA" : "FALLA");

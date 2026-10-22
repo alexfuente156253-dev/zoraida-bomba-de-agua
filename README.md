@@ -59,7 +59,7 @@ RED CALLE ===>|CHECK #0 |=====>|  BOMBA B1  |=====>|CHECK #1 |=====> (Nodo "T"1)
 
 - **Check #0:** mantiene la carcasa de B1 llena y cebada cuando falta agua en la calle.
 - **Check #1:** retiene los 20 PSI del pulmón con la bomba apagada.
-- **Check #2:** abastece la casa por gravedad desde el tanque durante `ESPERA_SIN_AGUA` y `PAUSA_ENFRIAMIENTO_MOTOR`.
+- **Check #2:** abastece la casa por gravedad desde el tanque durante `ESPERA_SIN_FLUJO` y `PAUSA_ENFRIAMIENTO_MOTOR`.
 
 ## Diagrama eléctrico
 
