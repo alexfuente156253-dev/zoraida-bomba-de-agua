@@ -38,12 +38,12 @@ python tools/calibrar.py --puerto COM3 E --nota "tanque a 3 dedos del fondo"
 python tools/calibrar.py --puerto COM3 secuencia      # E, L, F, S, C con confirmaciones
 ```
 Guarda cada medición en `data/calibraciones.csv` (fecha, comando, medición, nota, datos). Pide escribir `SI` antes de encender la bomba. Ctrl+C envía `X`. Anota en `--nota` el nivel del tanque y la presión de la calle.
-*Nada de esto se ha compilado ni probado en la placa (no hay arduino-cli ni placa conectada en esta PC).*
+*El firmware compila sin errores en ambos modos con PlatformIO (`python -m platformio run`). Aún no se ha probado en la placa ni el script contra hardware. downloads.arduino.cc devuelve 403 desde esta red, por eso `arduino-cli` no pudo instalar el núcleo AVR.*
 
 ## Detalle del comando `E` (P_ESTATICA_REAL)
 
 Enviar `E` por serie. No enciende la bomba. Requiere estado REPOSO con bomba apagada. Promedia 10 s y reporta promedio, mín, máx, dispersión, y sugiere `P_CAIDA_SECO` (= prom − 1.2) y precarga (= prom + 0.4). Avisos: dispersión > 0.5 PSI (grifo abierto/consumo) y promedio < 3 PSI.
-*Firmware modificado sin compilar ni probar en placa todavía.*
+*Compilado; sin probar en placa todavía.*
 
 ## Hallazgos
 
@@ -88,5 +88,5 @@ Extras: `X` apaga la bomba de inmediato, `?` lista comandos. Seguridad: solo con
 ## Pendiente
 - Medir P_ESTATICA_REAL (tanque a ~3 dedos del fondo) y confirmar la estimación de 5.0 PSI / altura del sensor.
 - Aplicar `P_CAIDA_SECO` y precarga calibrados.
-- Compilar y probar en la placa los comandos `E L F S C` y el script (no verificados).
+- Probar en la placa los comandos `E L F S C` y el script (compilan, pero no se han ejecutado en hardware).
 - Medir con la calle en su presión más baja (L, S, C) y registrar la presión de calle en `--nota`.

@@ -7,12 +7,15 @@ Sistema de control y protección hidráulica (triple check + pulmón) para una b
 - **Sensor:** P2, 0–200 PSI ratiométrico (10%–90% de AVCC) en A1
 - **Firmware:** [control_bomba_b1_v10_3/control_bomba_b1_v10_3.ino](control_bomba_b1_v10_3/control_bomba_b1_v10_3.ino)
 
-## Recursos (arduino:avr:nano:cpu=atmega328p)
+## Recursos (medidos con PlatformIO, nanoatmega328, 2026-10-21)
 
 | Modo | Flash | SRAM |
 |---|---|---|
-| Producción | 3.146 B (10,2 %) | 82 B (4,0 %) |
-| `MODO_CALIBRACION` (Serial 9600) | 5.128 B (16,7 %) | 266 B (13,0 %) |
+| Producción | 4.622 B (15,0 %) | 71 B (3,5 %) |
+| `MODO_CALIBRACION` (Serial 9600, comandos E L F S C X) | 12.240 B (39,8 %) | 276 B (13,5 %) |
+
+(Las cifras de la versión anterior, ~3.146 B y ~5.128 B de flash, no se reprodujeron al compilar.)
+Compilar: `python -m platformio run` (entornos `nano_produccion` y `nano_calibracion`, ver [platformio.ini](platformio.ini)).
 
 ## Cambios en v10.3
 

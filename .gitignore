@@ -3,3 +3,5 @@ build/
 *.elf
 *.bin
 .vscode/
+.pio/
+__pycache__/
