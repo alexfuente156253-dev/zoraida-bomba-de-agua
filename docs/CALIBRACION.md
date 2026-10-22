@@ -105,3 +105,7 @@ Fecha: 2026-10-21.
 5. **Subir a la placa.** `python -m platformio run -e nano_calibracion -t upload --upload-port COMx` (si es clon con bootloader antiguo, usar `board = nanoatmega328` con `upload_speed = 57600`). Monitor: `python -m platformio device monitor -b 9600`.
 
 Limitación: solo se verificó que compila. Falta probar en la placa.
+
+## Simulador en lazo cerrado (sim/)
+
+Se agregó [../sim/](../sim/README.md): el firmware real compilado en el PC contra un modelo hidráulico simple (supuestos en el README del simulador). Resultado con el firmware actual: 6 de 10 escenarios pasan. Fallan `bomba_vacio` (bomba en vacío no detectada, hasta 45 min), `consumo_normal`, `consumo_alto` y `ciclado_corto` (falsas alarmas de calle seca cuando la casa consume durante el sondeo), y `base_baja` con pulmón ≥ 8 L (el sondeo de 4 s no alcanza 9.5 psi). Datos de entrada que faltan para afinar el modelo: **volumen del pulmón**, **presión real de la calle**, **altura de cierre y caudal de la bomba**. Detalle y limitaciones en [../sim/README.md](../sim/README.md).
