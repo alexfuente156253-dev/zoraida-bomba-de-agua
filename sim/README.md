@@ -103,3 +103,7 @@ Firmware compilado en los tres entornos (producción, calibración y depuración
 ## Resultados con la verificación por aceleración y el arranque inmediato (pedido 76)
 
 **12 de 15 escenarios pasan** (antes 11): `ciclado_corto` ya no da falsas alarmas y `bomba_pierde_fuerza` trabaja hasta la 1:26 (antes 1:11). Las 3 fallas restantes (`consumo_normal`, `consumo_alto`, `bomba_pierde_fuerza`) son el mismo caso: la casa consume tanto como la bomba da en ese momento y la presión se estanca bajo el umbral; con solo la presión no se distingue de la falta de agua (decisión del usuario: instrucción a los operadores). Costo de verificar por estancamiento (10 s) en lugar de 4 s: más segundos de bomba sin agua por reintento (`calle_seca`: 140 s en 4 h, antes 56 s; `sin_flujo`: 32 s, antes 14 s).
+
+## Resultados con "sin flujo = estancada en la estática o por debajo" (pedidos 83-85)
+
+**14 de 15 escenarios pasan.** Ya pasan `consumo_normal` (estancada en 8.09 psi, sobre la estática: hay flujo) y `bomba_pierde_fuerza` (llenando a 7.9 psi con la bomba débil: hay flujo; el sin flujo total llega cuando la bomba ya no puede). `pulmon_retenido` pasa a bombeo como flujo débil y la micro-pausa lo declara sin flujo (~20 s de bomba por intento), con la escalada 5/10/20 min funcionando. Solo falla `consumo_alto` (0.4 L/s continuos, más que la bomba: la presión queda en ~7.4 psi, en la estática), indistinguible de la falta de agua con un solo sensor. Corte de la calle en pleno llenado: se detecta a los ~11 s.

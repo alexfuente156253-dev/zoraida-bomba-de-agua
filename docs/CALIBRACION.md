@@ -211,3 +211,16 @@ Se eliminó el plazo fijo de 10 s (`T_SIN_FLUJO_REARRANQUE`) para que P2 supere 
 ## Arranque inmediato al tocar P_ARRANQUE (pedido 75; compilado en el pedido 76)
 
 Se eliminó la confirmación de demanda de 1.2 s (T_DEMANDA): la bomba enciende en cuanto P2 llega a P_ARRANQUE (si ya pasaron los 3 min entre arranques). Con la espera, el consumo seguía bajando la presión ~1 PSI (arrancaba en ~8.4 PSI). El ruido lo filtran el promedio de 64 lecturas y el filtro EMA.
+
+## Flujo insuficiente: reintento corto (pedido 79; reemplazado en el pedido 83)
+
+Si en la verificación al arrancar la presión se estanca bajo el umbral **pero subió por encima de la estática + 1** (y al menos 0.5 PSI sobre la presión de partida), la bomba sí dio agua: la casa se llevaba el caudal. En lugar de declarar sin flujo y escalar a 5/10/20 min, hace un **reintento corto** (1 min; con el anti-ciclado de 3 min entre arranques, el reintento ocurre ~3 min después del arranque fallido), como máximo 3 veces seguidas, sin sumar intentos fallidos. Si no subió de la estática + 1 (bomba sin agua), sigue la espera normal. Motivo nuevo en el registro: 19, "flujo insuficiente: reintento corto". Una bomba sin agua no puede pasar la estática + 1, así que el caso de calle seca no cambia.
+
+## Sin flujo = estancada en la estática o por debajo (pedido 83; compilado en el pedido 85)
+
+Regla del usuario: para declarar sin flujo se deben cumplir dos condiciones: **la aceleración llegó a cero** (10 s sin subir 0.25 PSI) y **la presión está en la estática o por debajo** (`P_SIN_FLUJO` = `P_ESTATICA_MAX` + 0.25 PSI de tolerancia, una cuenta del ADC: sin agua la presión queda justo en la estática). Se aplica en la verificación al arrancar y en bombeo. El usuario eligió que, si la presión cae a la estática con flujo ya establecido, la bomba apague a los ~10 s (antes 1 s).
+- **Estancada sobre la estática** sin llegar al umbral de la verificación: hay flujo (bomba débil o consumo) → pasa a bombeo (motivo 19, "flujo débil") y la micro-pausa de prueba decide.
+- El pulmón retenido sin agua (presión plana sobre la estática) lo detecta la micro-pausa: no cae y queda bajo el piso → sin flujo.
+- Se eliminaron el umbral "estática + 1" como criterio de sin flujo, la regla de 1 s (`T_SIN_FLUJO`, `flujoSobreUmbral`) y el reintento corto del pedido 79. `P_UMBRAL_FLUJO` (estática + 1) queda solo como mínimo del umbral de confirmación al arrancar.
+
+Corrección (pedido 84): el paso a bombeo por "flujo débil" no borra los intentos fallidos (solo se borran al confirmar flujo), para que la escalada 5/10/20 min avance si la micro-pausa declara sin flujo. Compilado (pedido 85): producción 6.118 B flash / 81 B SRAM; calibración 13.676 B / 290 B; depuración 8.902 B / 276 B.

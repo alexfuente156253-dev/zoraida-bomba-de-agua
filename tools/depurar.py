@@ -35,9 +35,9 @@ MOTIVOS = [
     "-", "Encendido", "Demanda (P2 <= arranque)", "Flujo confirmado", "Verificacion: se estanco sin flujo",
     "Corte a 20 psi", "Lleno (estancada 18-20 psi)", "Prueba: estancada en nivel nuevo",
     "Micro-pausa periodica", "Presion cayo: sigue llenando", "Estancamiento sobre el piso",
-    "Sin flujo (pausa bajo el piso)", "Sin flujo (presion en la estatica)", "Tiempo maximo de bombeo",
+    "Sin flujo (pausa bajo el piso)", "Sin flujo (estancada en la estatica)", "Tiempo maximo de bombeo",
     "Fin de espera: reposo", "Fin de espera: reintento", "Falla de sensor", "Sensor recuperado",
-    "Fin de prueba de calibracion",
+    "Fin de prueba de calibracion", "Flujo debil: estancada sobre la estatica, a bombeo",
 ]
 
 

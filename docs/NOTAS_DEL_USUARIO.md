@@ -173,6 +173,18 @@ Transcripción ordenada de lo que el usuario explicó (nada de esto está implem
 75. Decidió que la bomba **encienda en el momento en que la presión toca P_ARRANQUE**, sin la espera de confirmación de 1.2 s. Aplicado (se eliminó T_DEMANDA). **Sin compilar.**
 
 76. Ordenó **simular, graficar, compilar y subir**. Compilados los tres entornos (producción 6.046 B); simulador **12 de 15** (las 3 fallas: consumo igual a la capacidad de la bomba); tablero actualizado; subido a GitHub.
+77. Pidió explicar cada detalle de la gráfica de la bomba que pierde fuerza (versión con verificación por aceleración).
+78. Preguntó en qué fase están los dos puntos débiles (gancho de 1:21 y caída de 1:26).
+
+79. Pidió aplicar la **solución 1** para la caída de 1:26 (reintento corto si la presión subió sobre la estática + 1 pero se estancó bajo el umbral) y **simular**. Para el gancho de 1:21 se deja como está (se corrige solo). Resultado de la simulación: la caída de 1:26 quedó resuelta (reintento corto a 1:29, la bomba volvió a trabajar hasta 13.1 PSI); siguen 12 de 15 porque la presión se estanca en 7.9-8.09 PSI, justo bajo estática + 1, mientras sí entrega agua (bomba débil llenando el tanque, o consumo). Sin compilar el firmware ni subir.
+80. Preguntó si la propuesta era bajar la estática (no: solo el margen sobre ella, de +1.0 a +0.5) y para qué se necesita que la presión esté por encima de la estática.
+81. Planteó un criterio nuevo de sin flujo: si la presión está por debajo de la estática se deben cumplir **dos condiciones**; condición 1) **la aceleración llegó a cero por debajo de la estática**. Condición 2) **la presión se estancó por debajo de la estática** (pedido 82). Es decir: sin flujo = estancada en la estática o por debajo.
+
+82. Aclaró la condición 2: la presión se estancó por debajo de la estática.
+83. Decidió que, si la presión cae a la estática con la bomba bombeando, **apague a los 10 s** (aceleración 0), no a 1 s; preguntó en qué caso aplica (calle agotada, muchas válvulas abiertas, pérdida de cebado). Aplicado: sin flujo = estancada en la estática o por debajo; estancada sobre la estática = flujo débil, sigue bombeando. Se eliminó el reintento corto. **Sin compilar.**
+84. Ordenó **simular**. Se encontró y corrigió un error: el paso por flujo débil borraba los intentos fallidos y la espera no escalaba. Resultado: 14 de 15 escenarios pasan (solo falla consumo_alto, 0.4 L/s continuos). Sin compilar el firmware ni subir.
+
+85. Ordenó **compilar y subir**. Compilados los tres entornos (producción 6.118 B); subido a GitHub.
 
 ## 4. Pendientes por decidir / datos que faltan
 

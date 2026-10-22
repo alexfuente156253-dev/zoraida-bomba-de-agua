@@ -243,7 +243,9 @@ static std::vector<Scn> escenarios() {
 
 static void evaluar(const std::string& n, const Res& r) {
   printf("\nVerificaciones:\n");
-  auto esp = idxTo(r, S_ESPERA);
+  std::vector<size_t> esp, cortas;   // esperas con escalada (intentos > 0) y reintentos cortos
+  for (size_t i : idxTo(r, S_ESPERA)) (r.ev[i].intentos > 0 ? esp : cortas).push_back(i);
+  if (!cortas.empty()) info("reintentos cortos por flujo insuficiente: %zu", cortas.size());
   if (n == "normal" || n == "bomba_debil") {
     check(r.final_h >= 1.49, "tanque lleno al final (h=%.2f m, lleno en %s)", r.final_h, r.t_full >= 0 ? hms(r.t_full).c_str() : "nunca");
     check(r.final_state == S_REPOSO, "termina en REPOSO (estado=%s)", NOMBRE_ESTADO[r.final_state]);
@@ -311,11 +313,16 @@ static void evaluar(const std::string& n, const Res& r) {
     info("arranques en cualquier hora: %d", startsInWindow(r, 3600));
     check(idxTo(r, S_FALLA).empty() && esp.empty(), "sin fallas ni esperas espurias");
   } else if (n == "pulmon_retenido") {
-    double mx = 0;
-    for (size_t i : idxTo(r, S_SONDEO)) mx = std::max(mx, durAfter(r, i));
-    check(!esp.empty(), "declara 'sin agua' (esperas: %zu)", esp.size());
-    check(idxTo(r, S_BOMBEO).empty(), "nunca pasa a BOMBEO_ACTIVO con P2 plana");
-    check(mx <= 12.0, "verificacion sin flujo mas larga %.1f s (<=12: estancamiento de 10 s)", mx);
+    // P2 plana sobre la estatica: pasa a bombeo como flujo debil y la micro-pausa la declara sin flujo.
+    // Cada intento: ~10 s de verificacion + ~10 s de estancamiento en bombeo + 3 s de pausa.
+    double mxOn = 0, tOn = -1;
+    for (auto& p : r.pump) {
+      if (p.second && tOn < 0) tOn = p.first;
+      else if (!p.second && tOn >= 0) { mxOn = std::max(mxOn, p.first - tOn); tOn = -1; }
+    }
+    check(esp.size() >= 2, "declara 'sin flujo' (esperas: %zu)", esp.size());
+    check(r.final_int >= 2, "la escalada de esperas avanza: 5 y luego 10 min (intentos al final: %d)", r.final_int);
+    check(mxOn <= 25.0, "bomba encendida sin agua por intento %.1f s (<=25)", mxOn);
   } else if (n == "base_baja") {
     auto so = idxTo(r, S_SONDEO);
     bool ok = !so.empty() && r.ev[so[0] + 1 < r.ev.size() ? so[0] + 1 : so[0]].to == S_BOMBEO;
