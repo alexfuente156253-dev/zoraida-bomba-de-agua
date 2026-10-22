@@ -249,7 +249,7 @@ static void evaluar(const std::string& n, const Res& r) {
     check(r.final_state == S_REPOSO, "termina en REPOSO (estado=%s)", NOMBRE_ESTADO[r.final_state]);
     check(idxTo(r, S_FALLA).empty(), "sin fallas espurias");
     info("arranques en la hora (maximo en cualquier ventana de 60 min): %d", startsInWindow(r, 3600));
-    info("esperas 'sin agua' con calle OK: %zu (el sondeo de 4 s exige llegar a P_ARRANQUE; depende del volumen del pulmon, ver --v-pulmon)", esp.size());
+    info("esperas 'sin agua' con calle OK: %zu", esp.size());
     info("presion maxima %.1f psi (corte instantaneo a 20 psi)", r.maxP);
   } else if (n == "calle_seca") {
     check(esp.size() >= 4, "al menos 4 esperas (hubo %zu)", esp.size());
@@ -260,7 +260,7 @@ static void evaluar(const std::string& n, const Res& r) {
     }
     double mx = 0;
     for (size_t i : idxTo(r, S_SONDEO)) mx = std::max(mx, durAfter(r, i));
-    check(mx <= 7.0, "sondeo mas largo %.1f s (<=7)", mx);
+    check(mx <= 12.0, "verificacion sin flujo mas larga %.1f s (<=12: estancamiento de 10 s)", mx);
     info("tanque vacio en %s; presion minima %.1f psi (tuberias vaciandose)",
          r.t_vacio >= 0 ? hms(r.t_vacio).c_str() : "nunca", r.minP);
   } else if (n == "sin_flujo") {
@@ -290,7 +290,7 @@ static void evaluar(const std::string& n, const Res& r) {
   } else if (n == "consumo_alto") {
     check(esp.empty(), "sin falsa alarma de 'sin flujo' con la calle OK (esperas: %zu)", esp.size());
     check(r.final_h >= 0.10, "el tanque no se vacia (h final %.2f m)", r.final_h);
-    info("presion minima en la casa %.1f psi; el sondeo de 4 s no distingue 'sin agua' de 'demanda que se lleva el caudal'", r.minP);
+    info("presion minima en la casa %.1f psi", r.minP);
   } else if (n == "limite_45min") {
     check(!esp.empty(), "apaga por tiempo maximo de bombeo (esperas: %zu)", esp.size());
     if (!esp.empty()) {
@@ -315,11 +315,11 @@ static void evaluar(const std::string& n, const Res& r) {
     for (size_t i : idxTo(r, S_SONDEO)) mx = std::max(mx, durAfter(r, i));
     check(!esp.empty(), "declara 'sin agua' (esperas: %zu)", esp.size());
     check(idxTo(r, S_BOMBEO).empty(), "nunca pasa a BOMBEO_ACTIVO con P2 plana");
-    check(mx <= 7.0, "sondeo mas largo %.1f s (<=7)", mx);
+    check(mx <= 12.0, "verificacion sin flujo mas larga %.1f s (<=12: estancamiento de 10 s)", mx);
   } else if (n == "base_baja") {
     auto so = idxTo(r, S_SONDEO);
     bool ok = !so.empty() && r.ev[so[0] + 1 < r.ev.size() ? so[0] + 1 : so[0]].to == S_BOMBEO;
-    check(ok, "el primer sondeo con calle OK confirma cebado (llegar de ~5.5 a %.1f psi en <=4 s)", (double)P_ARRANQUE);
+    check(ok, "la primera verificacion con calle OK confirma flujo (desde ~5.5 psi)");
     info("esperas 'sin agua' con calle OK: %zu; el sondeo exige subir hasta max(base+1.5, P_ARRANQUE)", esp.size());
   } else if (n == "bomba_pierde_fuerza") {
     // Cierre total de la bomba = calle + 19 psi; la calle baja de 6 a -10 psi en 7200 s.

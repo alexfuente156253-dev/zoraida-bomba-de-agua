@@ -199,3 +199,15 @@ Resultado (pedido 59): presión máxima en el simulador **20.1–20.2 PSI** (ant
 ## Modo de bombeo con tres valores (pedido 65; compilado en el pedido 66)
 
 `modoBombeo` reemplaza a `modoHidroneumatico`: **SUBIENDO** (bomba encendida sin meseta confirmada), **LLENANDO** (meseta confirmada y P2 en ella) e **HIDRONEUMÁTICO** (P2 sobre la meseta, o el ciclo terminó arriba: corte a 20 PSI, lleno por estancamiento o presión de estancamiento, aunque nunca se haya confirmado una meseta). Antes, con el tanque lleno y sin meseta confirmada la etiqueta decía "llenando". Es informativo (reporte serie, telemetría y simulador); la micro-pausa periódica sigue corriendo solo en LLENANDO.
+
+## Verificación al arrancar por aceleración de presión, sin plazo fijo (pedido 70; compilado en el pedido 76)
+
+Por indicación del usuario, la verificación al arrancar (`SONDEO_CALLE`) ya no tiene plazo fijo de 4 s (ni el techo de 6.5 s) ni pendiente mínima de 0.3 PSI/s: usa **la misma función de aceleración de presión que el bombeo**. Mientras P2 supere su máximo en 0.25 PSI (`SUBIDA_MIN_ESTANCAMIENTO`), sigue; si pasa 10 s (`T_ESTANCAMIENTO`) sin subir por debajo del umbral, es sin flujo. El flujo se confirma cuando P2 supera el umbral (presión de partida + 1.5, mínimo estática + 1, máximo el piso) durante 1 s: llegar a él desde abajo ya demuestra la subida. Se eliminaron `PENDIENTE_MIN_SUBIDA`, `T_VENTANA_PENDIENTE`, `T_PRUEBA_CEBADO`, `T_MAX_SONDEO_ABS` y su ventana de pendiente. Efecto: con la bomba débil o con consumo ya no se corta a los 4 s mientras la presión sube; una bomba sin agua se declara sin flujo a los ~10 s en lugar de 4.
+
+## Sin flujo tras arrancar o reanudar, por aceleración (pedido 73; compilado en el pedido 76)
+
+Se eliminó el plazo fijo de 10 s (`T_SIN_FLUJO_REARRANQUE`) para que P2 supere el umbral de flujo después de arrancar o reanudar una micro-pausa. Ahora usa la función de aceleración: mientras P2 siga subiendo hacia el umbral, el bombeo continúa; si se estanca (10 s sin superar su máximo en 0.25 PSI) por debajo del umbral, es sin flujo (motivo 4). Con el flujo ya establecido sigue la regla del usuario: tocar la estática + 1 durante 1 s es sin flujo (motivo 12). Con esto, toda decisión sobre si hay flujo depende de la aceleración; los tiempos que quedan son protecciones del motor (3 min entre arranques, 15 s al encender, 1.5 s mínimo de pausa), la espera sin flujo (el sensor no ve la calle con la bomba apagada), el tiempo máximo de 45 min (fugas), la ventana de la propia aceleración (10 s) y filtros de ruido cortos.
+
+## Arranque inmediato al tocar P_ARRANQUE (pedido 75; compilado en el pedido 76)
+
+Se eliminó la confirmación de demanda de 1.2 s (T_DEMANDA): la bomba enciende en cuanto P2 llega a P_ARRANQUE (si ya pasaron los 3 min entre arranques). Con la espera, el consumo seguía bajando la presión ~1 PSI (arrancaba en ~8.4 PSI). El ruido lo filtran el promedio de 64 lecturas y el filtro EMA.

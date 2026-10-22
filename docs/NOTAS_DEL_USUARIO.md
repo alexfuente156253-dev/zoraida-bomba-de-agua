@@ -160,6 +160,19 @@ Transcripción ordenada de lo que el usuario explicó (nada de esto está implem
 65. Aprobó el **modo de bombeo con tres valores** (subiendo / llenando / hidroneumático), para que un ciclo con el tanque lleno no se etiquete como llenado. Aplicado. **Sin compilar.**
 
 66. Ordenó **compilar, graficar y subir**. Compilados los tres entornos (producción 6.482 B, calibración 13.878 B, depuración 9.048 B); simulador 11 de 15 (fallas = consumo al arrancar); tablero actualizado con el modo en el cursor y la gráfica nueva "Vuelve el agua con el tanque vacío"; subido a GitHub.
+67. Preguntó si los valles de la gráfica de la bomba que pierde fuerza son micro-pausas.
+68. Concluyó que el proyecto quedó listo; se resumió lo terminado y lo que falta en campo.
+69. Preguntó si la verificación de 4 s se hace al principio (al arrancar la bomba).
+
+70. Pidió que la verificación al arrancar, **en vez de 4 segundos, use la misma función de aceleración de presión**. Aplicado: sigue mientras la presión suba y declara sin flujo solo si se estanca (10 s sin subir 0.25 PSI) bajo el umbral; se eliminaron el plazo de 4 s y la pendiente de 0.3 PSI/s. **Sin compilar.**
+71. Preguntó cuál es el umbral y qué es la presión de partida de la verificación al arrancar.
+72. Planteó que con la lógica de aceleración se puede hacer todo sin establecer tiempos fijos.
+
+73. Aprobó reemplazar el plazo de 10 s tras arrancar o reanudar por la **función de aceleración**. Aplicado: toda decisión de flujo depende ya de la aceleración; los tiempos fijos que quedan son protecciones del motor, la espera sin flujo, el máximo de 45 min, la ventana de medida y filtros de ruido. **Sin compilar.**
+74. Preguntó por qué en la gráfica la presión baja hasta cerca de la línea de flujo (8.1 PSI) antes de arrancar, si el arranque es 9.5 PSI.
+75. Decidió que la bomba **encienda en el momento en que la presión toca P_ARRANQUE**, sin la espera de confirmación de 1.2 s. Aplicado (se eliminó T_DEMANDA). **Sin compilar.**
+
+76. Ordenó **simular, graficar, compilar y subir**. Compilados los tres entornos (producción 6.046 B); simulador **12 de 15** (las 3 fallas: consumo igual a la capacidad de la bomba); tablero actualizado; subido a GitHub.
 
 ## 4. Pendientes por decidir / datos que faltan
 

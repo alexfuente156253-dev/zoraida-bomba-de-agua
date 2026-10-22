@@ -32,7 +32,7 @@ DIR = Path(__file__).resolve().parent.parent / "data" / "depuracion"
 ESTADOS = ["Reposo", "Verificacion de flujo", "Bombeo", "Micro-pausa", "Espera sin flujo", "Falla de sensor"]
 MODOS = ["Subiendo", "Llenando", "Hidroneumatico"]
 MOTIVOS = [
-    "-", "Encendido", "Demanda (P2 <= arranque)", "Flujo confirmado", "Verificacion sin subida",
+    "-", "Encendido", "Demanda (P2 <= arranque)", "Flujo confirmado", "Verificacion: se estanco sin flujo",
     "Corte a 20 psi", "Lleno (estancada 18-20 psi)", "Prueba: estancada en nivel nuevo",
     "Micro-pausa periodica", "Presion cayo: sigue llenando", "Estancamiento sobre el piso",
     "Sin flujo (pausa bajo el piso)", "Sin flujo (presion en la estatica)", "Tiempo maximo de bombeo",

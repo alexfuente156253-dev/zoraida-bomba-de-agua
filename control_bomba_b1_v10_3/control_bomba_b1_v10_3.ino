@@ -78,9 +78,9 @@ struct EventoLog {
 
 // Descomentar SOLO durante las pruebas de calibración con PC conectada.
 // Uso de recursos en ATmega328P (medido con PlatformIO):
-//   - Desactivado (Producción): Flash = 6482 bytes (21.1%), SRAM = 95 bytes (4.6%)
-//   - Activado (Calibración):   Flash = 13878 bytes (45.2%), SRAM = 304 bytes (14.8%)
-//   - MODO_DEPURACION:          Flash = 9048 bytes (29.5%), SRAM = 290 bytes (14.2%)
+//   - Desactivado (Producción): Flash = 6046 bytes (19.7%), SRAM = 86 bytes (4.2%)
+//   - Activado (Calibración):   Flash = 13664 bytes (44.5%), SRAM = 295 bytes (14.4%)
+//   - MODO_DEPURACION:          Flash = 8892 bytes (28.9%), SRAM = 281 bytes (13.7%)
 // #define MODO_CALIBRACION
 
 // ================= PROTECCIÓN BOOTLOADER ANTIGUO (WDT BUG) =================
@@ -129,11 +129,9 @@ const float DELTA_SOBRE_ESTATICA    = 1.0;  // Hay flujo solo si P2 supera la es
 // Umbral ÚNICO de flujo (criterio del usuario: estática 7.5 -> hay flujo por encima de 8.5 PSI). Lo usan
 // la verificación al arrancar (exigir P2 por encima) y el bombeo (P2 <= umbral 10 s = sin flujo).
 const float P_UMBRAL_FLUJO          = P_ESTATICA_MAX + DELTA_SOBRE_ESTATICA;
-const float PENDIENTE_MIN_SUBIDA    = 0.3;  // PSI/s mínimos para confirmar flujo al arrancar (sondeo)
-const unsigned long T_VENTANA_PENDIENTE = 1000UL; // Ventana de pendiente en el arranque (sondeo de 4 s)
 const unsigned long T_SIN_FLUJO         = 1000UL;  // Ya con flujo: P2 toca el umbral 1 s -> sin flujo (criterio del usuario)
-const unsigned long T_SIN_FLUJO_REARRANQUE = 10000UL; // Tras arrancar o reanudar, plazo para que P2 supere el umbral
-// En bombeo, "estancada" = la presión NO SUBE: en T_ESTANCAMIENTO no supera en SUBIDA_MIN_ESTANCAMIENTO el
+// En la verificación al arrancar y en bombeo, "estancada" = la presión NO SUBE (una sola función de
+// aceleración de presión para todo): en T_ESTANCAMIENTO no supera en SUBIDA_MIN_ESTANCAMIENTO el
 // máximo ya alcanzado. Una subida lenta (p. ej. el flotador cerrando poco a poco) sigue siendo subida.
 const unsigned long T_ESTANCAMIENTO     = 10000UL; // 10 s sin subir = aceleración 0
 const float SUBIDA_MIN_ESTANCAMIENTO    = 0.25;    // PSI (~1 cuenta del ADC) para contar como subida
@@ -159,10 +157,7 @@ const float CAIDA_MIN_FLUJO_ACTIVO  = 0.80; // Caída mínima, desde la presión
 const unsigned long T_IGNORAR_INICIO_PAUSA = 500UL; // Primeros 0.5 s de la pausa sin evaluar (golpe de ariete)
 
 // ================= TIEMPOS DE CONTROL Y PROTECCIÓN (ms) =================
-const unsigned long T_PRUEBA_CEBADO      = 4000UL;   // 4.0 seg máx en SONDEO_CALLE (Check #0 mantiene B1 cebada)
-const unsigned long T_MAX_SONDEO_ABS     = 6500UL;   // 6.5 seg techo absoluto en SONDEO_CALLE ante oscilaciones
 const unsigned long T_CONFIRMA_CEBADO    = 1000UL;   // 1.0 seg sosteniendo el Delta P confirma flujo hacia pulmón
-const unsigned long T_DEMANDA            = 1200UL;   // 1.2 seg bajo 9.5 PSI para confirmar descarga del pulmón
 
 // Intervalos Adaptativos de Micro-Pausa (cubre toda la franja de 9.5 a 19.9 PSI)
 const unsigned long T_VERIF_INICIAL      = 90000UL;  // 1ra verificación a los 90 seg
@@ -186,7 +181,7 @@ const unsigned long T_ESPERA_3 = 1200000UL; // 20 minutos (3er intento en adelan
 // ================= MÁQUINA DE ESTADOS =================
 enum EstadoSistema {
   REPOSO_PRESURIZADO,       // Pulmón cargado entre 9.5 y 20 PSI, bomba apagada
-  SONDEO_CALLE,             // Modo verificación de flujo al energizar B1: subida sostenida (4 s máx)
+  SONDEO_CALLE,             // Modo verificación de flujo al energizar B1: sigue mientras la presión suba
   BOMBEO_ACTIVO,            // Flujo confirmado: modo LLENANDO TANQUE o HIDRONEUMÁTICO (hasta 20 PSI)
   VERIFICANDO_FLUJO,        // Micro-pausa activa (1.5s a 3.0s) cuando P2 está en meseta sin subir
   ESPERA_SIN_FLUJO,          // Sin flujo (calle seca, bomba sin agua o pérdida de cebado): espera escalonada 5/10/20 min (casa con agua por Check #2)
@@ -202,7 +197,7 @@ enum MotivoEvento : uint8_t {
   M_ENCENDIDO,            // 1  Encendido del Arduino
   M_DEMANDA,              // 2  P2 bajó a P_ARRANQUE: arranca la verificación de flujo
   M_FLUJO_CONFIRMADO,     // 3  La verificación confirmó flujo: bombeo
-  M_SIN_SUBIDA,           // 4  La verificación no vio subida sostenida: sin flujo
+  M_SIN_SUBIDA,           // 4  En la verificación la presión se estancó bajo el umbral: sin flujo
   M_CORTE_20,             // 5  P2 llegó a P_MAX_OFF: corte
   M_LLENO_ESTANCADO,      // 6  Estancada entre 18 y 20 PSI: tanque lleno
   M_PRUEBA_NIVEL_NUEVO,   // 7  Estancada en un nivel nuevo: micro-pausa de prueba
@@ -228,7 +223,6 @@ unsigned long t_ultimaVerificacion  = 0;
 unsigned long t_inicioPausaVerif    = 0;
 unsigned long t_ultimoArranque      = 0;
 unsigned long t_fallaSensor         = 0;
-unsigned long t_ventanaPendiente    = 0;
 unsigned long t_sinFlujo            = 0;
 unsigned long t_estancamiento       = 0; // Última vez que P2 aceleró en modo hidroneumático
 
@@ -256,8 +250,6 @@ float presionBaseArranque  = 9.0;  // Captura P2 del pulmón justo antes de ence
 float pRefVerificacion     = 10.0; // Presión al inicio del intervalo para evaluar si está subiendo sola
 float pInicioPausa         = 12.0; // P2 en el instante de apagar para la micro-pausa (referencia de la caída)
 bool sensorValido          = true;
-float pVentanaPendiente    = 0.0;  // P2 al inicio de la ventana de pendiente (SONDEO_CALLE)
-bool subidaCebado          = false; // true si en alguna ventana de 1 s P2 subió >= la pendiente mínima
 // Modo de bombeo (informativo: reporte serie y depuración; el control no depende de él):
 //   SUBIENDO       bomba encendida, todavía sin meseta de llenado confirmada
 //   LLENANDO       meseta confirmada y P2 en ella
@@ -471,9 +463,8 @@ void iniciarSondeoCalle(unsigned long ahora, float presionActual) {
   presionBaseArranque = presionActual;
   modoBombeo          = MODO_SUBIENDO;
   pMeseta             = -1.0;           // Cada arranque parte sin meseta conocida
-  pVentanaPendiente   = presionActual;
-  t_ventanaPendiente  = ahora;
-  subidaCebado        = false;
+  pMaxEstanc          = presionActual;  // Medición de estancamiento desde la presión de partida
+  t_estancamiento     = ahora;
   t_inicioEstado      = ahora;
   t_condicion         = ahora;
   estado              = SONDEO_CALLE;
@@ -880,19 +871,18 @@ void loop() {
       // Exige 180s desde el último arranque
       bool ventanaArranqueLista = (ahora - t_ultimoArranque >= T_MIN_ENTRE_ARRANQUES);
 
+      // Arranca en el momento en que P2 toca P_ARRANQUE, sin espera de confirmación (criterio del usuario):
+      // con 1.2 s de espera el consumo seguía bajando la presión ~1 PSI antes de encender. El ruido ya lo
+      // filtran el promedio de 64 lecturas y el filtro EMA del sensor.
       if (P2 <= P_ARRANQUE && ventanaArranqueLista) {
-        if (ahora - t_condicion >= T_DEMANDA) {
-          motivo = M_DEMANDA;
-          iniciarSondeoCalle(ahora, P2);
-        }
-      } else {
-        t_condicion = ahora;
+        motivo = M_DEMANDA;
+        iniciarSondeoCalle(ahora, P2);
       }
       break;
     }
 
     // ------------------------------------------------------------------
-    // ESTADO 2: ARRANQUE DE PRUEBA (4.0s CON CHECK #0 MANTENIENDO VOLUTA LLENA)
+    // ESTADO 2: VERIFICACIÓN DE FLUJO AL ARRANCAR (CHECK #0 MANTIENE LA VOLUTA LLENA)
     // ------------------------------------------------------------------
     case SONDEO_CALLE: {
       encenderBomba(ahora);
@@ -918,18 +908,18 @@ void loop() {
         break;
       }
 
-      // 2. Cebado confirmado = P2 subió de forma sostenida (pendiente >= PENDIENTE_MIN_SUBIDA en alguna
-      //    ventana de 1 s) Y superó el umbral dinámico durante 1.0 s. Una P2 plana, aunque esté alta
-      //    (pulmón retenido por el Check #1), no confirma flujo.
-      if (ahora - t_ventanaPendiente >= T_VENTANA_PENDIENTE) {
-        float pendiente = (P2 - pVentanaPendiente) * 1000.0 / (float)(ahora - t_ventanaPendiente);
-        if (pendiente >= PENDIENTE_MIN_SUBIDA) {
-          subidaCebado = true;
-        }
-        pVentanaPendiente  = P2;
-        t_ventanaPendiente = ahora;
+      // 2. Aceleración de presión: la misma función de estancamiento que en bombeo. Mientras P2 siga
+      //    superando su máximo en SUBIDA_MIN_ESTANCAMIENTO, la verificación continúa (sin plazo fijo), aunque
+      //    la subida sea lenta (bomba débil o la casa consumiendo).
+      if (P2 > pMaxEstanc + SUBIDA_MIN_ESTANCAMIENTO) {
+        pMaxEstanc      = P2;
+        t_estancamiento = ahora;
       }
-      bool cebadoOk = subidaCebado && (P2 >= umbralCebadoDinamico);
+
+      // 3. Flujo confirmado: P2 superó el umbral dinámico durante 1.0 s. Como el umbral está siempre por
+      //    encima de la presión de partida y de la estática + 1, llegar a él demuestra que la presión subió;
+      //    una P2 plana (pulmón retenido por el Check #1 sin agua) nunca lo alcanza.
+      bool cebadoOk = (P2 >= umbralCebadoDinamico);
       if (cebadoOk) {
         if (ahora - t_condicion >= T_CONFIRMA_CEBADO) {
           intentosFallidos       = 0; // Éxito de cebado: reinicia el escalonamiento de espera sin agua
@@ -949,11 +939,8 @@ void loop() {
         t_condicion = ahora;
       }
 
-      // 3. Guardián de tiempo independiente (4.0s sin Delta P, o 6.5s absolutos):
-      bool sinIncrementoDeCebado  = !cebadoOk && (ahora - t_inicioEstado >= T_PRUEBA_CEBADO);
-      bool tiempoAbsolutoExcedido = (ahora - t_inicioEstado >= T_MAX_SONDEO_ABS);
-
-      if (sinIncrementoDeCebado || tiempoAbsolutoExcedido) {
+      // 4. Sin flujo: la presión se estancó (T_ESTANCAMIENTO sin subir) por debajo del umbral.
+      if (!cebadoOk && (ahora - t_estancamiento >= T_ESTANCAMIENTO)) {
         apagarBomba();
         motivo = M_SIN_SUBIDA;
         if (intentosFallidos < 10) intentosFallidos++;
@@ -983,33 +970,33 @@ void loop() {
         break;
       }
 
-      // --- B. SIN FLUJO (incluye bomba en vacío, calle seca o pérdida de cebado) ---
-      //     Criterio del usuario: si con la bomba encendida la presión desciende hasta la estática (alguien
-      //     abrió una válvula o se agota la calle), es sin flujo apenas la toca (P2 <= P_UMBRAL_FLUJO 1 s).
-      //     Tras arrancar o reanudar (la micro-pausa deja P2 cerca de la estática) se dan hasta 10 s para que
-      //     P2 supere el umbral; si no lo supera en ese plazo, también es sin flujo.
-      if (P2 > P_UMBRAL_FLUJO) {
-        flujoSobreUmbral = true;
-      }
-      unsigned long plazoSinFlujo = flujoSobreUmbral ? T_SIN_FLUJO : T_SIN_FLUJO_REARRANQUE;
-      if (P2 <= P_UMBRAL_FLUJO) {
-        if (ahora - t_sinFlujo >= plazoSinFlujo) {
-          apagarBomba();
-          motivo = M_SIN_FLUJO_NIVEL;
-          if (intentosFallidos < 10) intentosFallidos++;
-          t_inicioEstado = ahora;
-          estado         = ESPERA_SIN_FLUJO;
-          break;
-        }
-      } else {
-        t_sinFlujo = ahora;
-      }
-
-      // --- B2. ESTANCAMIENTO Y MESETAS: micro-pausa de prueba en cada estancamiento en un nivel nuevo ---
+      // Aceleración de presión (la misma función en todo el programa): ¿P2 sigue superando su máximo?
       if (P2 > pMaxEstanc + SUBIDA_MIN_ESTANCAMIENTO) {
         pMaxEstanc      = P2;         // Sigue subiendo (aunque sea lento)
         t_estancamiento = ahora;
       }
+
+      // --- B. SIN FLUJO (incluye bomba en vacío, calle seca o pérdida de cebado) ---
+      //     Con flujo ya establecido (P2 superó el umbral): si la presión desciende hasta la estática (alguien
+      //     abrió una válvula o se agota la calle), es sin flujo apenas la toca (P2 <= P_UMBRAL_FLUJO 1 s).
+      //     Tras arrancar o reanudar (la micro-pausa deja P2 cerca de la estática), mientras P2 siga subiendo
+      //     hacia el umbral el bombeo continúa; si se estanca por debajo del umbral, es sin flujo.
+      if (P2 > P_UMBRAL_FLUJO) {
+        flujoSobreUmbral = true;
+        t_sinFlujo       = ahora;
+      }
+      bool sinFlujo = flujoSobreUmbral ? (ahora - t_sinFlujo >= T_SIN_FLUJO)
+                                       : (ahora - t_estancamiento >= T_ESTANCAMIENTO);
+      if (sinFlujo) {
+        apagarBomba();
+        motivo = flujoSobreUmbral ? M_SIN_FLUJO_NIVEL : M_SIN_SUBIDA;
+        if (intentosFallidos < 10) intentosFallidos++;
+        t_inicioEstado = ahora;
+        estado         = ESPERA_SIN_FLUJO;
+        break;
+      }
+
+      // --- B2. ESTANCAMIENTO Y MESETAS: micro-pausa de prueba en cada estancamiento en un nivel nuevo ---
       bool nivelNuevo    = (pMeseta < 0.0) || (P2 > pMeseta + MARGEN_NUEVO_NIVEL);
       if (pMeseta < 0.0) {
         modoBombeo = MODO_SUBIENDO;

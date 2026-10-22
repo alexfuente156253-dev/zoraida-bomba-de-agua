@@ -99,3 +99,7 @@ Observación del usuario: con la calle seca y el tanque totalmente vacío la pre
 ## Resultados (pedido 66)
 
 Firmware compilado en los tres entornos (producción, calibración y depuración). **11 de 15 escenarios pasan**. Nuevos: `calle_seca` con consumo vacía el tanque a las 2:08 y la presión cae a ~0 psi; `vuelve_tanque_vacio` se recupera sin ninguna falsa alarma (la sospecha de que rellenar la subida haría fallar la verificación de 4 s no se confirmó). Las 4 fallas siguen siendo el consumo durante la verificación al arrancar. El CSV del simulador incluye la columna `modo` (subiendo, llenando, hidroneumático).
+
+## Resultados con la verificación por aceleración y el arranque inmediato (pedido 76)
+
+**12 de 15 escenarios pasan** (antes 11): `ciclado_corto` ya no da falsas alarmas y `bomba_pierde_fuerza` trabaja hasta la 1:26 (antes 1:11). Las 3 fallas restantes (`consumo_normal`, `consumo_alto`, `bomba_pierde_fuerza`) son el mismo caso: la casa consume tanto como la bomba da en ese momento y la presión se estanca bajo el umbral; con solo la presión no se distingue de la falta de agua (decisión del usuario: instrucción a los operadores). Costo de verificar por estancamiento (10 s) en lugar de 4 s: más segundos de bomba sin agua por reintento (`calle_seca`: 140 s en 4 h, antes 56 s; `sin_flujo`: 32 s, antes 14 s).

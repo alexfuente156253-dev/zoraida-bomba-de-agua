@@ -11,9 +11,9 @@ Sistema de control y protección hidráulica (triple check + pulmón) para una b
 
 | Modo | Flash | SRAM |
 |---|---|---|
-| Producción | 6.482 B (21,1 %) | 95 B (4,6 %) |
-| `MODO_CALIBRACION` (Serial 9600, comandos E L F S C X R) | 13.878 B (45,2 %) | 304 B (14,8 %) |
-| `MODO_DEPURACION` (eventos, telemetría, comandos D B) | 9.048 B (29,5 %) | 290 B (14,2 %) |
+| Producción | 6.046 B (19,7 %) | 86 B (4,2 %) |
+| `MODO_CALIBRACION` (Serial 9600, comandos E L F S C X R) | 13.664 B (44,5 %) | 295 B (14,4 %) |
+| `MODO_DEPURACION` (eventos, telemetría, comandos D B) | 8.892 B (28,9 %) | 281 B (13,7 %) |
 
 (Las cifras de la versión anterior, ~3.146 B y ~5.128 B de flash, no se reprodujeron al compilar.)
 Compilar: `python -m platformio run` (entornos `nano_produccion` y `nano_calibracion`, ver [platformio.ini](platformio.ini)).
