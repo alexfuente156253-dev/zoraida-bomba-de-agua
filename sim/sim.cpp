@@ -1,5 +1,5 @@
 // Simulador en lazo cerrado: firmware REAL (.ino compilado en el PC) + modelo hidraulico simple.
-// Uso:  sim <escenario> [--quiet] [--csv archivo] [--p-street psi] [--p-pre psi] [--v-pulmon L]
+// Uso:  sim <escenario> [--quiet] [--csv archivo] [--p-street psi] [--p-pre psi] [--v-pulmon L] [--h0 psi]
 //       sim            (lista los escenarios)
 // Los parametros hidraulicos son SUPUESTOS (ver sim/README.md): sirven para probar la LOGICA
 // de control, no para calibrar valores. Un resultado FALLA indica un caso a verificar en campo.
@@ -297,6 +297,7 @@ int main(int argc, char** argv) {
     else if (a == "--p-street" && i + 1 < argc) proto.P_street = atof(argv[++i]);
     else if (a == "--p-pre" && i + 1 < argc) proto.P_pre = atof(argv[++i]);
     else if (a == "--v-pulmon" && i + 1 < argc) proto.V_tot = atof(argv[++i]);
+    else if (a == "--h0" && i + 1 < argc) proto.H0 = atof(argv[++i]);
   }
   const Scn* S = nullptr;
   for (auto& s : lista) if (nombre == s.name) S = &s;

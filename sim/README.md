@@ -14,7 +14,7 @@ sim\build\sim.exe normal --csv log.csv                      # P, nivel y caudale
 powershell -ExecutionPolicy Bypass -File sim\run_all.ps1    # todos; solo muestra FALLA/INFO
 .\sim\sensibilidad.ps1 -Escenarios normal,base_baja         # barrido de --v-pulmon (o -Parametro p-street / p-pre)
 ```
-Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre psi`.
+Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre psi`, `--h0 psi` (altura de cierre de la bomba sobre la calle).
 
 ## Supuestos del modelo (NO medidos; editar en `Hyd` de sim.cpp)
 
@@ -54,3 +54,7 @@ Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre
 ## Límites
 
 Resultados cualitativos. Con parámetros aproximados un FALLA indica un caso a **verificar en campo**, no un error confirmado; los PASA no garantizan nada fuera del modelo (sin golpe de ariete, sin arranque de motor, sin aire atrapado, sin variación de la calle). Re-ejecutar tras cada cambio de lógica o con los valores medidos (`--v-pulmon`, `--p-street`).
+
+## Bomba debilitada (dato del usuario)
+
+La bomba antes apenas cortaba el presostato a 30 psi y ahora solo llega a 25 psi (desgaste: impulsor, condensador, fugas de aire en la succión o motor). Con la calle a 6 psi equivale a `--h0 25` (antes) y `--h0 19` (ahora). Con `--h0 19` el modelo se estanca en ~9.4 psi mientras llena el tanque, por debajo de `P_ARRANQUE` (9.5): el sondeo siempre falla, el sistema cae en espera de 20 min y el tanque no se llena (independiente del volumen del pulmón). Solución en el firmware: recalibrar con el comando `L` (`P_ARRANQUE` ≥ 1 psi por debajo de `P_LLENADO_REAL`, siempre por encima de la estática máxima ~7.1 psi). Con la bomba debilitada esa ventana es de solo ~2 psi; conviene revisar la bomba.
