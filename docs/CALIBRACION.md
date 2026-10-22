@@ -90,3 +90,18 @@ Extras: `X` apaga la bomba de inmediato, `?` lista comandos. Seguridad: solo con
 - Aplicar `P_CAIDA_SECO` y precarga calibrados.
 - Probar en la placa los comandos `E L F S C` y el script (compilan, pero no se han ejecutado en hardware).
 - Medir con la calle en su presión más baja (L, S, C) y registrar la presión de calle en `--nota`.
+
+## Registro: cómo se compiló (PlatformIO)
+
+Fecha: 2026-10-21.
+
+1. **Intento con `arduino-cli`.** Se instaló con `winget install --id ArduinoSA.CLI -e` (v1.5.1) y se intentó `arduino-cli core update-index` y `arduino-cli core install arduino:avr`. Falló con **403 Forbidden** al descargar `https://downloads.arduino.cc/packages/package_index.tar.bz2`.
+2. **Descartar el túnel.** El entorno tenía `HTTP_PROXY`, `HTTPS_PROXY` y `ALL_PROXY` (127.0.0.1:25344/25345). Se quitaron solo para el comando y también se probó con `curl --noproxy "*"` y con User-Agent de navegador. `downloads.arduino.cc` siguió devolviendo 403 (bloqueo del servidor hacia esta conexión), mientras que github.com, PyPI y el registro de PlatformIO respondían 200.
+3. **Cambio a PlatformIO.** Se instaló con `python -m pip install --user platformio` (v6.2.0) y se creó [../platformio.ini](../platformio.ini) con `src_dir = control_bomba_b1_v10_3`, `platform = atmelavr`, `board = nanoatmega328`, `framework = arduino`. El entorno `nano_calibracion` añade `build_flags = -DMODO_CALIBRACION` en lugar de editar el `.ino`.
+4. **Compilación.** `python -m platformio run` descargó la toolchain AVR y el framework y compiló ambos entornos sin errores:
+   - `nano_produccion`: Flash 4.622 B (15,0 %), SRAM 71 B (3,5 %).
+   - `nano_calibracion`: Flash 12.240 B (39,8 %), SRAM 276 B (13,5 %).
+   Un aviso de "Package Mirror" (no resolvió `usc1.contabostorage.com`) no impidió la compilación.
+5. **Subir a la placa.** `python -m platformio run -e nano_calibracion -t upload --upload-port COMx` (si es clon con bootloader antiguo, usar `board = nanoatmega328` con `upload_speed = 57600`). Monitor: `python -m platformio device monitor -b 9600`.
+
+Limitación: solo se verificó que compila. Falta probar en la placa.
