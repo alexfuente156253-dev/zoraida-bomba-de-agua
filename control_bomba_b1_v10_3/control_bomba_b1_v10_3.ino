@@ -98,6 +98,17 @@ const float P_MAX_OFF               = 20.0; // Cut-off: corta cuando el pulmón 
 // Incremento relativo exigido en SONDEO_CALLE para demostrar que B1 abrió el Check #1
 const float DELTA_P_CEBADO          = 1.5;  // Exige +1.5 PSI (> 6 cuentas del ADC) sobre la base de arranque
 
+// Detección de flujo por SUBIDA SOSTENIDA de presión + referencia a la estática (criterio del usuario):
+//   - Sin agua la bomba no puede subir P2; si P2 queda plana o cerca de la estática de la columna de
+//     llenado, no hay flujo, aunque esté por encima de la estática (pulmón retenido por el Check #1).
+//   - P_ESTATICA_MAX = estática con tanque LLENO (columna de la subida, entra por arriba). Medir con 'E'.
+const float P_ESTATICA_MAX          = 7.1;  // SUPUESTO ~7.1 PSI: medir con tanque lleno y reemplazar
+const float DELTA_SOBRE_ESTATICA    = 1.0;  // Para confirmar flujo, P2 debe superar la estática en 1.0 PSI
+const float PENDIENTE_MIN_CEBADO    = 0.3;  // PSI/s mínimos, medidos en ventanas de 1 s, durante el sondeo
+const float P_SIN_FLUJO             = P_ESTATICA_MAX + 0.5; // Con B1 encendida, P2 <= esto = sin flujo
+const unsigned long T_VENTANA_PENDIENTE = 1000UL; // Ventana de medición de la pendiente
+const unsigned long T_SIN_FLUJO         = 10000UL; // 10 s con P2 <= P_SIN_FLUJO y B1 encendida -> sin agua
+
 // Parámetros de la Micro-Pausa de Verificación Hidrodinámica
 const float AVANCE_OMITE_PAUSA      = 0.75; // Si P2 subió >= 0.75 PSI (>3 cuentas) en el intervalo, omite apagar B1
 const float CAIDA_MIN_FLUJO_ACTIVO  = 0.80; // Caída mínima desde el pico durante la pausa que confirma flujo abierto
@@ -156,6 +167,8 @@ unsigned long t_inicioPausaVerif    = 0;
 unsigned long t_ultimoArranque      = 0;
 unsigned long t_inicioVentanaHora   = 0;
 unsigned long t_fallaSensor         = 0;
+unsigned long t_ventanaPendiente    = 0;
+unsigned long t_sinFlujo            = 0;
 
 #ifdef MODO_CALIBRACION
 unsigned long t_reporteSerial       = 0;
@@ -178,6 +191,8 @@ float presionBaseArranque  = 9.0;  // Captura P2 del pulmón justo antes de ence
 float pRefVerificacion     = 10.0; // Presión al inicio del intervalo para evaluar si está subiendo sola
 float pPicoDurantePausa    = 12.0; // Rastrea el valor máximo en VERIFICANDO_FLUJO (absorbe golpe de ariete)
 bool sensorValido          = true;
+float pVentanaPendiente    = 0.0;  // P2 al inicio de la ventana de pendiente (SONDEO_CALLE)
+bool subidaCebado          = false; // true si en alguna ventana de 1 s P2 subió >= PENDIENTE_MIN_CEBADO
 
 // ================= FUNCIONES DE HARDWARE Y LECTURA =================
 void apagarBomba() {
@@ -242,6 +257,9 @@ unsigned long obtenerIntervaloVerificacionAdaptativo() {
 void iniciarSondeoCalle(unsigned long ahora, float presionActual) {
   // Captura la presión retenida en el pulmón (aguas abajo del Check #1) ANTES de energizar B1
   presionBaseArranque = presionActual;
+  pVentanaPendiente   = presionActual;
+  t_ventanaPendiente  = ahora;
+  subidaCebado        = false;
   t_inicioEstado      = ahora;
   t_condicion         = ahora;
   t_corteAlta         = ahora;
@@ -632,9 +650,11 @@ void loop() {
       encenderBomba(ahora);
       digitalWrite(PIN_LED_ESTADO, HIGH);
 
+      // Umbral: +DELTA_P_CEBADO sobre la base, y siempre por encima de la estática máxima + margen
+      // (descarta que la subida sea el pulmón recargándose por gravedad desde el tanque).
       float umbralCebadoDinamico = presionBaseArranque + DELTA_P_CEBADO;
-      if (umbralCebadoDinamico < P_ARRANQUE) {
-        umbralCebadoDinamico = P_ARRANQUE;
+      if (umbralCebadoDinamico < P_ESTATICA_MAX + DELTA_SOBRE_ESTATICA) {
+        umbralCebadoDinamico = P_ESTATICA_MAX + DELTA_SOBRE_ESTATICA;
       }
       if (umbralCebadoDinamico > P_TECHO_CEBADO_DINAMICO) {
         umbralCebadoDinamico = P_TECHO_CEBADO_DINAMICO;
@@ -653,8 +673,19 @@ void loop() {
         t_corteAlta = ahora;
       }
 
-      // 2. Verificar si superó el umbral dinámico de cebado durante 1.0s
-      if (P2 >= umbralCebadoDinamico) {
+      // 2. Cebado confirmado = P2 subió de forma sostenida (pendiente >= PENDIENTE_MIN_CEBADO en alguna
+      //    ventana de 1 s) Y superó el umbral dinámico durante 1.0 s. Una P2 plana, aunque esté alta
+      //    (pulmón retenido por el Check #1), no confirma flujo.
+      if (ahora - t_ventanaPendiente >= T_VENTANA_PENDIENTE) {
+        float pendiente = (P2 - pVentanaPendiente) * 1000.0 / (float)(ahora - t_ventanaPendiente);
+        if (pendiente >= PENDIENTE_MIN_CEBADO) {
+          subidaCebado = true;
+        }
+        pVentanaPendiente  = P2;
+        t_ventanaPendiente = ahora;
+      }
+      bool cebadoOk = subidaCebado && (P2 >= umbralCebadoDinamico);
+      if (cebadoOk) {
         if (ahora - t_condicion >= T_CONFIRMA_CEBADO) {
           intentosFallidos       = 0; // Éxito de cebado: reinicia el escalonamiento de espera sin agua
           verificacionesExitosas = 0; // Inicia el intervalo adaptativo en 90s
@@ -663,6 +694,7 @@ void loop() {
           t_corteAlta            = ahora;
           t_caidaSeco            = ahora;
           t_ultimaVerificacion   = ahora;
+          t_sinFlujo             = ahora;
           estado                 = BOMBEO_ACTIVO;
           break;
         }
@@ -671,7 +703,7 @@ void loop() {
       }
 
       // 3. Guardián de tiempo independiente (4.0s sin Delta P, o 6.5s absolutos):
-      bool sinIncrementoDeCebado  = (P2 < umbralCebadoDinamico) && (ahora - t_inicioEstado >= T_PRUEBA_CEBADO);
+      bool sinIncrementoDeCebado  = !cebadoOk && (ahora - t_inicioEstado >= T_PRUEBA_CEBADO);
       bool tiempoAbsolutoExcedido = (ahora - t_inicioEstado >= T_MAX_SONDEO_ABS);
 
       if (sinIncrementoDeCebado || tiempoAbsolutoExcedido) {
@@ -714,6 +746,21 @@ void loop() {
         }
       } else {
         t_caidaSeco = ahora;
+      }
+
+      // --- B2. Sin flujo: con B1 encendida, P2 en la estática de la columna (o por debajo) durante 10 s ---
+      //     Con agua, P2 queda sobre la estática por la fricción del llenado; sin agua el pulmón se drena
+      //     hacia el tanque y P2 cae a la estática. Detecta la bomba en vacío en segundos.
+      if (P2 <= P_SIN_FLUJO) {
+        if (ahora - t_sinFlujo >= T_SIN_FLUJO) {
+          apagarBomba();
+          if (intentosFallidos < 10) intentosFallidos++;
+          t_inicioEstado = ahora;
+          estado         = ESPERA_SIN_AGUA;
+          break;
+        }
+      } else {
+        t_sinFlujo = ahora;
       }
 
       // --- C. Verificación Hidrodinámica Adaptativa (90s -> 180s -> 300s) ---
@@ -796,6 +843,7 @@ void loop() {
         t_ultimaVerificacion = ahora;
         t_corteAlta          = ahora;
         t_caidaSeco          = ahora;
+        t_sinFlujo           = ahora;
         encenderBomba(ahora); // Contabiliza el re-arranque en arranquesEnLaHora
         estado               = BOMBEO_ACTIVO;
         break;

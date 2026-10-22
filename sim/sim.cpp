@@ -128,6 +128,7 @@ struct Scn {
   std::function<double(double)> house;
   std::function<int(double)>    adc;
   double tankD = 0.8;       // m, diametro del tanque
+  double H0psi = -1;        // >0 sustituye la altura de cierre de la bomba
 };
 
 static bool g_ok = true;
@@ -191,6 +192,10 @@ static std::vector<Scn> escenarios() {
                [](double t) { return (t >= 30 && fmod(t - 30, 200.0) < 40.0) ? 0.30 : 0.0; }, sinFalla});
   v.push_back({"base_baja", "Arranque con el pulmon en la estatica del tanque casi vacio (5.5 psi), calle OK (10 min)",
                600, 0.40, 5.54, siempre, nada, sinFalla});
+  v.push_back({"pulmon_retenido", "Calle seca con el pulmon retenido a 9 psi por el Check #1 y tanque lleno: P2 plana, sin subida (15 min)",
+               900, 1.5, 9.0, [](double) { return false; }, nada, sinFalla});
+  v.push_back({"bomba_debil", "Llenado normal con la bomba degradada (cierre 25 psi con calle de 6 psi) (1 h)",
+               3600, 0.75, 7.10, siempre, nada, sinFalla, 0.8, 19.0});
   v.push_back({"calle_vuelve", "Calle seca los primeros 30 min y luego regresa (2 h)",
                7200, 0.50, 7.10, [](double t) { return t >= 1800.0; }, nada, sinFalla});
   return v;
@@ -199,7 +204,7 @@ static std::vector<Scn> escenarios() {
 static void evaluar(const std::string& n, const Res& r) {
   printf("\nVerificaciones:\n");
   auto esp = idxTo(r, S_ESPERA);
-  if (n == "normal") {
+  if (n == "normal" || n == "bomba_debil") {
     check(r.final_h >= 1.49, "tanque lleno al final (h=%.2f m, lleno en %s)", r.final_h, r.t_full >= 0 ? hms(r.t_full).c_str() : "nunca");
     check(r.final_state == S_REPOSO, "termina en REPOSO (estado=%s)", NOMBRE_ESTADO[r.final_state]);
     check(idxTo(r, S_ENFRIA).empty() && idxTo(r, S_FALLA).empty(), "sin enfriamientos ni fallas espurias");
@@ -265,6 +270,12 @@ static void evaluar(const std::string& n, const Res& r) {
     check(minGap >= 179.0, "separacion minima entre arranques desde reposo %.0f s (>=180)", minGap);
     check(startsInWindow(r, 3600) <= 18, "arranques en cualquier hora: %d (<=18)", startsInWindow(r, 3600));
     check(idxTo(r, S_FALLA).empty() && esp.empty(), "sin fallas ni esperas espurias");
+  } else if (n == "pulmon_retenido") {
+    double mx = 0;
+    for (size_t i : idxTo(r, S_SONDEO)) mx = std::max(mx, durAfter(r, i));
+    check(!esp.empty(), "declara 'sin agua' (esperas: %zu)", esp.size());
+    check(idxTo(r, S_BOMBEO).empty(), "nunca pasa a BOMBEO_ACTIVO con P2 plana");
+    check(mx <= 7.0, "sondeo mas largo %.1f s (<=7)", mx);
   } else if (n == "base_baja") {
     auto so = idxTo(r, S_SONDEO);
     bool ok = !so.empty() && r.ev[so[0] + 1 < r.ev.size() ? so[0] + 1 : so[0]].to == S_BOMBEO;
@@ -307,7 +318,7 @@ int main(int argc, char** argv) {
   printf("Supuestos: calle %.1f psi, pulmon %.0f L precarga %.1f psi, bomba H0=%.0f psi\n",
          proto.P_street, proto.V_tot, proto.P_pre, proto.H0);
 
-  Hyd hyd = proto; hyd.tank_D = S->tankD; hyd.h = S->h0; hyd.setPressure(S->P0);
+  Hyd hyd = proto; hyd.tank_D = S->tankD; if (S->H0psi > 0) hyd.H0 = S->H0psi; hyd.h = S->h0; hyd.setPressure(S->P0);
   FILE* csv = csvPath.empty() ? nullptr : fopen(csvPath.c_str(), "w");
   if (csv) fprintf(csv, "t,estado,bomba,P_real,P_fw,h,q_pump,q_fill,q_chk2,q_house,calle\n");
 

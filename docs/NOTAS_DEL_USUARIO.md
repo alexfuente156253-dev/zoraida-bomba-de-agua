@@ -23,7 +23,8 @@ Archivo vivo: se agrega aquí lo que el usuario va indicando (hechos de la insta
 2. Para calibrar umbrales inferiores se usa el valor **mínimo** (tanque casi vacío). Si la estática real es mayor, no hay problema (más margen).
 3. Para detectar si hay agua al arrancar la bomba hay que **medir la aceleración (velocidad de subida) de la presión** justo en el arranque: si la subida se **frena o se estanca**, se presume que **no hay fluido**.
 4. Matiz del usuario: la presión puede estar **por encima de la estática pero sin aceleración** (pulmón retenido por el Check #1); eso también debe contar como "sin fluido". El nivel sobre la estática solo no basta.
-5. La corrección de la detección de bomba en vacío (cruce de `P_ARRANQUE` en la micro-pausa) fue aprobada ("sí").
+5. Aprobó implementar la detección por **subida sostenida de presión** ("ok procede con lo demás") con los valores iniciales propuestos: pendiente mínima 0.3 PSI/s, +1.5 PSI sobre la base, δ = 1.0 PSI sobre la estática máxima (sin objeción a los valores).
+6. La corrección de la detección de bomba en vacío (cruce de `P_ARRANQUE` en la micro-pausa) fue aprobada ("sí").
 
 ## 3. Pedidos y decisiones (cronología)
 
@@ -43,9 +44,11 @@ Archivo vivo: se agrega aquí lo que el usuario va indicando (hechos de la insta
 14. Informó la pérdida de potencia de la bomba (30 → 25 PSI).
 15. Explicó la física de la presión de llenado y propuso medir la aceleración de la presión al arrancar; después matizó el caso "sobre la estática pero sin aceleración".
 16. Pidió registrar todo lo que dice en un archivo aparte (este archivo).
+17. Pidió proceder con lo demás → se implementó la detección por subida sostenida y se probó en el simulador.
 
 ## 4. Pendientes por decidir / datos que faltan
 
 - Volumen real del pulmón, presión real de la calle, altura de cierre y caudal de la bomba (curva H‑Q).
-- Valores iniciales propuestos para la nueva detección (sin confirmar por el usuario): `DELTA_P_CEBADO` 1.5 PSI, pendiente mínima ~0.3 PSI/s, δ sobre la estática 1.0 PSI.
+- Valores iniciales implementados para la nueva detección (a calibrar en campo): `DELTA_P_CEBADO` 1.5 PSI, pendiente mínima 0.3 PSI/s, δ sobre la estática 1.0 PSI, `P_ESTATICA_MAX` 7.1 PSI (supuesto: medir con `E` con el tanque lleno).
+- Falsas alarmas de "calle seca" cuando la casa consume durante el arranque: sin resolver (el simulador las reproduce).
 - Medir en campo: `E` (tanque lleno y casi vacío), `L`, `F`, `S`, `C`.

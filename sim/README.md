@@ -28,7 +28,7 @@ Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre
 | Check #2 | 5 psi/(L/s)² | Supuesto |
 | Sensor | ruido ADC 1 cuenta por muestra | Supuesto |
 
-## Escenarios y resultado con el firmware actual (7 de 10 pasan; fallan los tres de falsa alarma por consumo)
+## Escenarios y resultado con el firmware actual (9 de 12 pasan; fallan los tres de falsa alarma por consumo)
 
 | Escenario | Qué prueba | Resultado |
 |---|---|---|
@@ -36,9 +36,11 @@ Opciones: `--quiet`, `--csv archivo`, `--v-pulmon L`, `--p-street psi`, `--p-pre
 | `calle_seca` | Escalada de esperas 5/10/20/20 min | PASA |
 | `sensor_falla` | Cable suelto: falla en 1.5 s, bomba apagada, recuperación | PASA |
 | `limite_45min` | Corte a 45 min y enfriamiento de 20 min | PASA |
-| `base_baja` | Arranque desde la estática del tanque casi vacío | PASA con pulmón ≤ 6 L, **FALLA con ≥ 8 L** |
+| `base_baja` | Arranque desde la estática del tanque casi vacío | PASA con pulmón ≤ 12 L, FALLA con 20 L |
+| `pulmon_retenido` | Pulmón retenido a 9 psi por el Check #1, P2 plana, sin agua | PASA: nunca pasa a BOMBEO, declara sin agua |
+| `bomba_debil` | Llenado con la bomba degradada (cierre 25 psi) | PASA con pulmón ≤ 12 L (antes de la nueva detección fallaba con cualquier volumen) |
 | `calle_vuelve` | Reanudación al volver el agua | PASA |
-| `bomba_vacio` | La calle se corta en pleno llenado | PASA tras la corrección (antes: no se detectaba, 2.409 s de bomba en vacío hasta los 45 min; ahora se detecta en la siguiente micro-pausa, 184 s en vacío) |
+| `bomba_vacio` | La calle se corta en pleno llenado | PASA: se detecta a los ~11 s del corte (originalmente no se detectaba: 2.409 s en vacío; tras la corrección de la micro-pausa: 184 s) |
 | `consumo_normal` | Consumo de la casa al momento de arrancar | **FALLA**: falsa alarma de "calle seca" (espera de 5 min) |
 | `consumo_alto` | Demanda continua 0.4 L/s | **FALLA**: falsas alarmas y esperas de 5/10/20 min mientras el tanque se vacía |
 | `ciclado_corto` | Ráfagas de consumo cada 200 s | **FALLA**: falsas alarmas; el presupuesto de 18 arranques/h se consume casi entero |
@@ -58,3 +60,9 @@ Resultados cualitativos. Con parámetros aproximados un FALLA indica un caso a *
 ## Bomba debilitada (dato del usuario)
 
 La bomba antes apenas cortaba el presostato a 30 psi y ahora solo llega a 25 psi (desgaste: impulsor, condensador, fugas de aire en la succión o motor). Con la calle a 6 psi equivale a `--h0 25` (antes) y `--h0 19` (ahora). Con `--h0 19` el modelo se estanca en ~9.4 psi mientras llena el tanque, por debajo de `P_ARRANQUE` (9.5): el sondeo siempre falla, el sistema cae en espera de 20 min y el tanque no se llena (independiente del volumen del pulmón). Solución en el firmware: recalibrar con el comando `L` (`P_ARRANQUE` ≥ 1 psi por debajo de `P_LLENADO_REAL`, siempre por encima de la estática máxima ~7.1 psi). Con la bomba debilitada esa ventana es de solo ~2 psi; conviene revisar la bomba.
+
+## Detección por subida sostenida de presión (criterio del usuario)
+
+Implementada en el firmware: en `SONDEO_CALLE` el cebado se confirma solo si P2 sube de forma sostenida (pendiente ≥ `PENDIENTE_MIN_CEBADO` = 0.3 psi/s en alguna ventana de 1 s) y supera `max(base + 1.5, P_ESTATICA_MAX + 1.0)` durante 1 s; ya no se exige llegar a `P_ARRANQUE`. En `BOMBEO_ACTIVO`, si P2 ≤ `P_ESTATICA_MAX + 0.5` durante 10 s con B1 encendida, se declara sin flujo. `P_ESTATICA_MAX` (7.1 psi) es un supuesto: medirlo con `E` con el tanque lleno.
+
+Efecto en el simulador: bomba en vacío detectada en ~11 s; bomba debilitada ya llena el tanque; el pulmón retenido (P2 plana por encima de la estática) no se toma por flujo. **Sigue sin resolverse** la falsa alarma cuando la casa consume durante el sondeo (`consumo_normal`, `consumo_alto`, `ciclado_corto`): bajar el margen sobre la estática a 0.5 o 0.7 psi no lo arregla, así que el límite está en cuánto caudal se lleva la casa; hace falta el volumen real del pulmón y la curva de la bomba.
